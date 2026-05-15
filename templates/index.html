@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>네이버 쇼핑인사이트 급상승 키워드 분석</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { background: #f8fafc; }
+    .card { background: #fff; border-radius: 12px; box-shadow: 0 1px 6px rgba(0,0,0,.08); }
+    .btn-primary {
+      background: #03c75a; color: #fff; font-weight: 600;
+      padding: 10px 28px; border-radius: 8px; border: none; cursor: pointer;
+      transition: background .15s;
+    }
+    .btn-primary:hover { background: #02b350; }
+    .btn-primary:disabled { background: #a0e6c0; cursor: not-allowed; }
+    .btn-outline {
+      background: #fff; color: #03c75a; font-weight: 600;
+      padding: 8px 20px; border-radius: 8px; border: 2px solid #03c75a; cursor: pointer;
+      transition: all .15s;
+    }
+    .btn-outline:hover { background: #f0fdf4; }
+    .spinner {
+      display: inline-block; width: 18px; height: 18px;
+      border: 3px solid rgba(255,255,255,.3); border-top-color: #fff;
+      border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .badge-low    { background:#dcfce7; color:#16a34a; }
+    .badge-medium { background:#fef9c3; color:#ca8a04; }
+    .badge-high   { background:#fee2e2; color:#dc2626; }
+    table th { background: #f1f5f9; }
+    tr:hover td { background: #f8fafc; }
+    .growth-up   { color: #dc2626; font-weight: 700; }
+    .growth-down { color: #2563eb; }
+    .score-bar { height: 6px; border-radius: 3px; background: #e2e8f0; overflow: hidden; }
+    .score-bar-fill { height: 100%; background: #03c75a; border-radius: 3px; }
+    #resultArea { display: none; }
+    #errorBox   { display: none; }
+    .row-link { cursor: pointer; }
+    .row-link:hover td { background: #f0fdf4 !important; }
+    .rc-up   { color: #dc2626; font-size: 11px; font-weight: 700; }
+    .rc-down { color: #2563eb; font-size: 11px; font-weight: 700; }
+    .rc-new  { color: #16a34a; font-size: 10px; font-weight: 700; }
+    .rc-flat { color: #d1d5db; font-size: 11px; }
+    .th-sort { cursor: pointer; user-select: none; white-space: nowrap; }
+    .th-sort:hover { color: #374151; }
+    .sort-icon { margin-left: 3px; font-size: 10px; color: #d1d5db; }
+    .sort-icon.active { color: #03c75a; }
+    /* 숨김 컬럼: 초기avg(5), 최근avg(6), 점수(9) — 제거 아님, display:none만 */
+    #resultArea table th:nth-child(5), #resultArea table td:nth-child(5),
+    #resultArea table th:nth-child(6), #resultArea table td:nth-child(6),
+    #resultArea table th:nth-child(9), #resultArea table td:nth-child(9) { display: none; }
+
+    /* 카테고리 선택 */
+    .cat-select {
+      width: 100%; border: 1px solid #d1d5db; border-radius: 8px;
+      padding: 8px 12px; font-size: 14px; background: #fff;
+      focus: outline-none;
+    }
+    .cat-select:focus { outline: none; border-color: #03c75a; box-shadow: 0 0 0 2px rgba(3,199,90,.25); }
+    .cat-select:disabled { background: #f9fafb; color: #9ca3af; }
+    .cat-path {
+      font-size: 12px; color: #03c75a; font-weight: 600;
+      padding: 4px 0; min-height: 20px;
+    }
+
+    /* 모달 */
+    #modal { display:none; position:fixed; inset:0; z-index:50; background:rgba(0,0,0,.45); align-items:center; justify-content:center; }
+    #modal.open { display:flex; }
+    .modal-box { background:#fff; border-radius:14px; width:90%; max-width:680px; padding:28px; position:relative; }
+    .modal-close { position:absolute; top:14px; right:16px; font-size:20px; background:none; border:none; cursor:pointer; color:#94a3b8; }
+    .modal-close:hover { color:#374151; }
+    .chart-tab { padding:6px 18px; border-radius:6px; border:none; cursor:pointer; font-size:13px; font-weight:600; transition:all .15s; }
+    .chart-tab.active { background:#03c75a; color:#fff; }
+    .chart-tab.inactive { background:#f1f5f9; color:#64748b; }
+
+    /* 네이버 쇼핑 카테고리 조회 */
+    #catFinderResults { max-height: 180px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px; margin-top: 6px; }
+    .cfr-item {
+      padding: 8px 10px; cursor: pointer;
+      font-size: 12px; line-height: 1.5; border-bottom: 1px solid #f1f5f9;
+    }
+    .cfr-item:hover { background: #f0fdf4; }
+    .cfr-item:last-child { border-bottom: none; }
+    .cfr-path { color: #374151; font-size: 12px; font-weight: 500; }
+    .cfr-count { color: #9ca3af; font-size: 11px; margin-top: 2px; }
+    .cfr-cid  { color: #03c75a; font-size: 11px; font-family: monospace; font-weight: 600; }
+  </style>
+</head>
+<body class="min-h-screen p-6">
+
+  <!-- 헤더 -->
+  <div class="max-w-5xl mx-auto mb-6">
+    <h1 class="text-2xl font-bold text-gray-800">
+      <span style="color:#03c75a">N</span> 쇼핑인사이트 급상승 키워드 분석
+    </h1>
+    <p class="text-sm text-gray-500 mt-1">쇼핑인사이트 인기검색어 + 데이터랩으로 신생·급상승 키워드를 자동 추출합니다.</p>
+  </div>
+
+  <!-- 입력 카드 -->
+  <div class="max-w-5xl mx-auto card p-6 mb-6">
+
+    <!-- 상단: 카테고리 선택 | 네이버 쇼핑 조회 -->
+    <div class="grid grid-cols-2 gap-5 mb-4">
+
+      <!-- 왼쪽: 카테고리 검색 + 직접 탐색 -->
+      <div>
+        <div class="flex items-center justify-between mb-1">
+          <label class="block text-sm font-semibold text-gray-700">카테고리 검색</label>
+          <span id="catIndexStatus" class="text-xs text-gray-400"></span>
+        </div>
+        <div id="catSearchWrapper" class="relative mb-3">
+          <input id="catSearch" type="text" autocomplete="off"
+            placeholder="예: 선크림, 스킨케어, 운동화"
+            class="cat-select pr-8"
+            oninput="debounceCatSearch()" onfocus="debounceCatSearch()">
+          <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">🔍</span>
+          <div id="catDropdown"
+            class="hidden absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 max-h-52 overflow-y-auto">
+          </div>
+        </div>
+        <div>
+          <span class="text-xs text-gray-500 mb-1 block">직접 탐색</span>
+          <div class="grid grid-cols-3 gap-2 mb-2">
+            <div>
+              <span class="text-xs text-gray-400 mb-1 block">1분류</span>
+              <select id="cat1" class="cat-select" onchange="onCat1Change()">
+                <option value="">불러오는 중…</option>
+              </select>
+            </div>
+            <div>
+              <span class="text-xs text-gray-400 mb-1 block">2분류</span>
+              <select id="cat2" class="cat-select" disabled onchange="onCat2Change()">
+                <option value="">— 선택 —</option>
+              </select>
+            </div>
+            <div>
+              <span class="text-xs text-gray-400 mb-1 block">3분류</span>
+              <select id="cat3" class="cat-select" disabled onchange="onCat3Change()">
+                <option value="">— 선택 —</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div id="catPath" class="cat-path">카테고리를 선택하세요.</div>
+      </div>
+
+      <!-- 오른쪽: 네이버 쇼핑 카테고리 조회 -->
+      <div>
+        <label class="block text-sm font-semibold text-gray-700 mb-1">네이버 쇼핑 카테고리 조회</label>
+        <div class="relative">
+          <input id="catFinderInput" type="text" autocomplete="off"
+            placeholder="예: 페이스튠핏, ldm디바이스"
+            class="cat-select pr-8"
+            oninput="catFinderSearch()">
+          <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">🛍</span>
+        </div>
+        <div id="catFinderResults"></div>
+        <p class="text-xs text-gray-400 mt-2">클릭하면 카테고리가 바로 적용됩니다</p>
+      </div>
+
+    </div>
+
+    <!-- 파라미터 -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+      <div>
+        <label class="block text-sm font-semibold text-gray-700 mb-1">분석 기간</label>
+        <select id="days" class="cat-select">
+          <option value="30">30일</option>
+          <option value="90" selected>90일</option>
+          <option value="180">180일</option>
+          <option value="365">1년</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-sm font-semibold text-gray-700 mb-1">인기검색어 수집</label>
+        <select id="max_pages" class="cat-select">
+          <option value="3">60개 (3페이지)</option>
+          <option value="5" selected>100개 (5페이지)</option>
+          <option value="7">140개 (7페이지)</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-sm font-semibold text-gray-700 mb-1">DataLab 분석 대상</label>
+        <select id="top_n" class="cat-select">
+          <option value="50">상위 50개</option>
+          <option value="100" selected>상위 100개</option>
+          <option value="140">전체 수집</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-sm font-semibold text-gray-700 mb-1">최소 월간 검색량</label>
+        <input id="min_monthly" type="number" min="0" step="500" value="5000"
+          class="cat-select" placeholder="0 = 제한없음">
+      </div>
+    </div>
+
+    <div class="mb-4">
+      <label class="block text-sm font-semibold text-gray-700 mb-1">
+        제외 키워드
+        <span class="text-gray-400 font-normal text-xs ml-1">— 쉼표로 구분 (스승의날·어버이날·선물세트 등은 기본 제외)</span>
+      </label>
+      <input id="exclude_keywords" type="text" class="cat-select"
+        placeholder="예: 선물, 세트, 기획" autocomplete="off">
+    </div>
+
+    <div class="flex items-center gap-3">
+      <button id="runBtn" class="btn-primary" onclick="runAnalysis()">분석 시작</button>
+      <span id="statusMsg" class="text-sm text-gray-500"></span>
+    </div>
+  </div>
+
+  <!-- 에러 -->
+  <div id="errorBox" class="max-w-5xl mx-auto mb-4 p-4 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm"></div>
+
+  <!-- 모달 -->
+  <div id="modal">
+    <div class="modal-box">
+      <button class="modal-close" onclick="closeModal()">✕</button>
+      <div class="flex items-baseline gap-3 mb-1">
+        <h3 id="modalTitle" class="text-lg font-bold text-gray-800"></h3>
+        <span id="modalSiRank" class="text-xs text-gray-400"></span>
+      </div>
+      <p id="modalVolInfo" class="text-xs text-gray-500 mb-3" style="display:none">
+        직전 30일 검색량: <strong id="modalVolNum" class="text-gray-800"></strong>회 (PC+모바일)
+      </p>
+      <div class="flex gap-2 mb-4">
+        <button class="chart-tab active"   id="tabDaily"   onclick="switchChart('daily')">일간 (30일)</button>
+        <button class="chart-tab inactive" id="tabMonthly" onclick="switchChart('monthly')">월간 (1년)</button>
+        <button class="chart-tab inactive" id="tabYearly"  onclick="switchChart('yearly')">년간 (3년)</button>
+      </div>
+      <div style="position:relative; height:260px;">
+        <canvas id="detailChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- 결과 테이블 -->
+  <div id="resultArea" class="max-w-5xl mx-auto card p-6 mb-10">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <h2 class="text-base font-bold text-gray-700">전체 결과 <span id="resultCount" class="text-gray-400 font-normal text-sm"></span></h2>
+        <p id="catNameDisplay" class="text-xs text-gray-400 mt-0.5"></p>
+      </div>
+      <div class="flex items-center gap-3">
+        <span id="dateRange" class="text-xs text-gray-400"></span>
+        <button class="btn-outline text-sm" onclick="downloadCSV()">CSV 다운로드</button>
+      </div>
+    </div>
+    <div class="flex items-start justify-between mb-3">
+      <p class="text-xs text-gray-400">행을 클릭하면 검색량 추이를 확인할 수 있습니다.</p>
+      <p class="text-xs text-gray-400 text-right leading-5">
+        검색량 순위 : 본 분석 결과 내 월간 검색량 기준 순위<br>
+        쇼핑 인기 순위 : 네이버 쇼핑 카테고리 내 검색 기준 인기 순위
+      </p>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm border-collapse">
+        <thead>
+          <tr class="text-left text-xs text-gray-500 uppercase tracking-wide">
+            <th class="py-2 px-3 rounded-tl-lg th-sort" onclick="sortTable('keyword')">키워드<span class="sort-icon" id="si-keyword"></span></th>
+            <th class="py-2 px-3 text-right th-sort" onclick="sortTable('monthly_vol')">월간 검색량<span class="sort-icon" id="si-monthly_vol"></span></th>
+            <th class="py-2 px-3 text-center th-sort" onclick="sortTable('vol_rank')">검색량 순위<span class="sort-icon" id="si-vol_rank"></span></th>
+            <th class="py-2 px-3 text-center th-sort" onclick="sortTable('si_rank')">쇼핑 인기 순위<span class="sort-icon" id="si-si_rank"></span></th>
+            <th class="py-2 px-3 text-right th-sort" onclick="sortTable('init_avg')">초기 avg<span class="sort-icon" id="si-init_avg"></span></th>
+            <th class="py-2 px-3 text-right th-sort" onclick="sortTable('recent_avg')">최근 avg<span class="sort-icon" id="si-recent_avg"></span></th>
+            <th class="py-2 px-3 text-right th-sort" onclick="sortTable('growth')">성장률<span class="sort-icon" id="si-growth"></span></th>
+            <th class="py-2 px-3 text-right th-sort" onclick="sortTable('peak_date')">정점<span class="sort-icon" id="si-peak_date"></span></th>
+            <th class="py-2 px-3 rounded-tr-lg th-sort" onclick="sortTable('score')">점수<span class="sort-icon" id="si-score"></span></th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+<script>
+let lastData    = null;
+let detailChart = null;
+let detailData  = null;
+let activeTab   = 'daily';
+
+// 선택된 카테고리 상태
+let selCid = '';
+let selPath = '';
+let catNames = { cat1: '', cat2: '', cat3: '' };
+
+// ── 카테고리 로딩 ──────────────────────────────────────────────
+async function fetchCats(cid) {
+  const res = await fetch(`/categories?cid=${cid}`);
+  return await res.json();
+}
+
+async function loadCat1() {
+  const data = await fetchCats(0);
+  const sel = document.getElementById('cat1');
+  sel.innerHTML = '<option value="">1분류 선택</option>';
+  (data.children || []).forEach(c => {
+    sel.innerHTML += `<option value="${c.cid}" data-leaf="${c.leaf}">${c.name}</option>`;
+  });
+}
+
+async function onCat1Change() {
+  const sel1 = document.getElementById('cat1');
+  const cid  = sel1.value;
+  catNames.cat1 = sel1.options[sel1.selectedIndex]?.text || '';
+  catNames.cat2 = '';
+  catNames.cat3 = '';
+
+  // Reset 2/3
+  const sel2 = document.getElementById('cat2');
+  const sel3 = document.getElementById('cat3');
+  sel2.innerHTML = '<option value="">— 선택 —</option>';
+  sel3.innerHTML = '<option value="">— 선택 —</option>';
+  sel2.disabled = true;
+  sel3.disabled = true;
+
+  if (!cid) { selCid = ''; updateCatPath(); return; }
+
+  selCid = cid;
+  updateCatPath();
+
+  const data = await fetchCats(cid);
+  if ((data.children || []).length > 0) {
+    sel2.innerHTML = '<option value="">2분류 선택</option>';
+    data.children.forEach(c => {
+      sel2.innerHTML += `<option value="${c.cid}" data-leaf="${c.leaf}">${c.name}</option>`;
+    });
+    sel2.disabled = false;
+  }
+}
+
+async function onCat2Change() {
+  const sel2 = document.getElementById('cat2');
+  const cid  = sel2.value;
+  catNames.cat2 = sel2.options[sel2.selectedIndex]?.text || '';
+  catNames.cat3 = '';
+
+  const sel3 = document.getElementById('cat3');
+  sel3.innerHTML = '<option value="">— 선택 —</option>';
+  sel3.disabled = true;
+
+  const sel1 = document.getElementById('cat1');
+  selCid = cid || sel1.value;
+  updateCatPath();
+
+  if (!cid) return;
+
+  const data = await fetchCats(cid);
+  if ((data.children || []).length > 0) {
+    sel3.innerHTML = '<option value="">3분류 선택</option>';
+    data.children.forEach(c => {
+      sel3.innerHTML += `<option value="${c.cid}" data-leaf="${c.leaf}">${c.name}</option>`;
+    });
+    sel3.disabled = false;
+  }
+}
+
+function onCat3Change() {
+  const sel3 = document.getElementById('cat3');
+  const cid  = sel3.value;
+  catNames.cat3 = sel3.options[sel3.selectedIndex]?.text || '';
+  const sel2 = document.getElementById('cat2');
+  const sel1 = document.getElementById('cat1');
+  selCid = cid || sel2.value || sel1.value;
+  updateCatPath();
+}
+
+function updateCatPath() {
+  const parts = [catNames.cat1, catNames.cat2, catNames.cat3].filter(Boolean);
+  selPath = parts.join(' > ');
+  document.getElementById('catPath').textContent = selPath
+    ? `선택: ${selPath} (CID: ${selCid})`
+    : '카테고리를 선택하세요.';
+}
+
+// ── 분석 ──────────────────────────────────────────────────────
+async function runAnalysis() {
+  const btn    = document.getElementById('runBtn');
+  const status = document.getElementById('statusMsg');
+  const errBox = document.getElementById('errorBox');
+
+  if (!selCid) {
+    errBox.textContent = '카테고리를 먼저 선택해 주세요.';
+    errBox.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> 분석 중…';
+  status.textContent = '쇼핑인사이트 수집 → DataLab 분석 중입니다. 잠시 기다려 주세요.';
+  errBox.style.display = 'none';
+  document.getElementById('resultArea').style.display = 'none';
+
+  const payload = {
+    cid:              selCid,
+    cat_name:         selPath,
+    days:             parseInt(document.getElementById('days').value),
+    max_pages:        parseInt(document.getElementById('max_pages').value),
+    top_n:            parseInt(document.getElementById('top_n').value),
+    min_monthly:      parseInt(document.getElementById('min_monthly').value) || 0,
+    exclude_keywords: document.getElementById('exclude_keywords').value.trim(),
+  };
+
+  try {
+    const res  = await fetch('/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '알 수 없는 오류');
+
+    lastData = data;
+    _sortCol = 'vol_rank';
+    _sortDir = 'asc';
+    const sorted = [...data.keywords].sort((a, b) => (a.vol_rank ?? 9999) - (b.vol_rank ?? 9999));
+    renderTable(sorted);
+    _updateSortIcons();
+    document.getElementById('dateRange').textContent    = `${data.start} ~ ${data.end}`;
+    document.getElementById('resultCount').textContent  = `(${data.keywords.length}개)`;
+    document.getElementById('catNameDisplay').textContent = `카테고리: ${data.cat_name}  |  인사이트 수집: ${data.si_total}개`;
+    document.getElementById('resultArea').style.display = 'block';
+    status.textContent = `완료! ${data.keywords.length}개 키워드 분석됨`;
+  } catch (e) {
+    errBox.textContent = '오류: ' + e.message;
+    errBox.style.display = 'block';
+    status.textContent = '';
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '분석 시작';
+  }
+}
+
+let _sortCol = 'score';
+let _sortDir = 'desc';
+
+const _SORT_COLS = ['rank','keyword','si_rank','monthly_vol','vol_rank','init_avg','recent_avg','growth','peak_date','score'];
+
+function sortTable(col) {
+  if (!lastData) return;
+  if (_sortCol === col) {
+    _sortDir = _sortDir === 'desc' ? 'asc' : 'desc';
+  } else {
+    _sortCol = col;
+    _sortDir = 'desc';
+  }
+  const sorted = [...lastData.keywords].sort((a, b) => {
+    const va = a[col], vb = b[col];
+    if (typeof va === 'string') return _sortDir === 'desc' ? vb.localeCompare(va, 'ko') : va.localeCompare(vb, 'ko');
+    return _sortDir === 'desc' ? vb - va : va - vb;
+  });
+  renderTable(sorted);
+  _updateSortIcons();
+}
+
+function _updateSortIcons() {
+  _SORT_COLS.forEach(col => {
+    const el = document.getElementById('si-' + col);
+    if (!el) return;
+    if (col === _sortCol) {
+      el.textContent = _sortDir === 'desc' ? '▼' : '▲';
+      el.className = 'sort-icon active';
+    } else {
+      el.textContent = '↕';
+      el.className = 'sort-icon';
+    }
+  });
+}
+
+function volRankStyle(rank) {
+  if (!rank || rank > 10) return '';
+  const t = (rank - 1) / 9; // 0(1위) → 1(10위)
+  const r = Math.round(153 + (254 - 153) * t);
+  const g = Math.round(27  + (202 - 27)  * t);
+  const b = Math.round(27  + (202 - 27)  * t);
+  const color = rank <= 5 ? '#fff' : '#7f1d1d';
+  return `background:rgb(${r},${g},${b});color:${color};border-radius:4px;padding:1px 7px;font-weight:700;`;
+}
+
+function rankBadge(change) {
+  if (change === null || change === undefined) return '<span class="rc-new">NEW</span>';
+  if (change === 0) return '<span class="rc-flat">–</span>';
+  if (change > 0)   return `<span class="rc-up">▲${change}</span>`;
+  return `<span class="rc-down">▼${Math.abs(change)}</span>`;
+}
+
+function renderTable(keywords) {
+  const maxScore = Math.max(...keywords.map(k => k.score), 0.1);
+  const rows = keywords.map(k => {
+    const pct = Math.round((k.score / maxScore) * 100);
+    const growthCls = k.growth >= 1.5 ? 'growth-up' : 'growth-down';
+    return `<tr class="border-b border-gray-100 row-link" onclick="openModal('${k.keyword.replace(/'/g,"\\'")}')">
+      <td class="py-2 px-3 font-semibold text-gray-800">${k.keyword}</td>
+      <td class="py-2 px-3 text-right text-gray-600">${(k.monthly_vol||0).toLocaleString()}</td>
+      <td class="py-2 px-3 text-center text-gray-500"><span style="${volRankStyle(k.vol_rank)}">${k.vol_rank ?? '-'}</span></td>
+      <td class="py-2 px-3 text-center text-gray-500"><span style="${volRankStyle(k.si_rank)}">${k.si_rank}</span></td>
+      <td class="py-2 px-3 text-right text-gray-500">${k.init_avg}</td>
+      <td class="py-2 px-3 text-right text-gray-600">${k.recent_avg}</td>
+      <td class="py-2 px-3 text-right ${growthCls}">${k.growth}x</td>
+      <td class="py-2 px-3 text-right text-gray-500">${k.peak_date}</td>
+      <td class="py-2 px-3">
+        <div class="flex items-center gap-2">
+          <span class="text-xs font-mono w-10 text-right">${k.score}</span>
+          <div class="score-bar flex-1"><div class="score-bar-fill" style="width:${pct}%"></div></div>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+  document.getElementById('tableBody').innerHTML = rows;
+}
+
+// ── 모달 ────────────────────────────────────────────────────────
+async function openModal(keyword) {
+  detailData = null;
+  activeTab  = 'daily';
+  document.getElementById('modalTitle').textContent = keyword;
+  document.getElementById('modal').classList.add('open');
+  document.getElementById('tabDaily').className   = 'chart-tab active';
+  document.getElementById('tabMonthly').className = 'chart-tab inactive';
+  document.getElementById('tabYearly').className  = 'chart-tab inactive';
+  document.getElementById('modalVolInfo').style.display = 'none';
+
+  if (detailChart) { detailChart.destroy(); detailChart = null; }
+
+  const kw = lastData?.keywords.find(k => k.keyword === keyword);
+  document.getElementById('modalSiRank').textContent = kw ? `쇼핑인사이트 ${kw.si_rank}위` : '';
+
+  const res = await fetch('/detail', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keyword }),
+  });
+  detailData = await res.json();
+
+  if (detailData.monthly_vol > 0) {
+    document.getElementById('modalVolNum').textContent = detailData.monthly_vol.toLocaleString();
+    document.getElementById('modalVolInfo').style.display = 'block';
+  }
+
+  drawChart('daily');
+}
+
+function closeModal() {
+  document.getElementById('modal').classList.remove('open');
+  if (detailChart) { detailChart.destroy(); detailChart = null; }
+}
+
+function switchChart(tab) {
+  activeTab = tab;
+  document.getElementById('tabDaily').className   = tab === 'daily'   ? 'chart-tab active' : 'chart-tab inactive';
+  document.getElementById('tabMonthly').className = tab === 'monthly' ? 'chart-tab active' : 'chart-tab inactive';
+  document.getElementById('tabYearly').className  = tab === 'yearly'  ? 'chart-tab active' : 'chart-tab inactive';
+  drawChart(tab);
+}
+
+function drawChart(tab) {
+  if (!detailData) return;
+  const series = detailData[tab] || [];
+  const labels = series.map(p => p.date);
+  const values = series.map(p => p.vol);
+  const hasVol = detailData.monthly_vol > 0;
+
+  const tabLabel = { daily: '일 검색량', monthly: '월 검색량', yearly: '월 검색량' };
+  const yLabel   = hasVol ? '검색량 (회)' : '트렌드 지수 (0~100)';
+  const dotSize  = tab === 'daily' ? 2 : 4;
+
+  if (detailChart) { detailChart.destroy(); }
+  detailChart = new Chart(document.getElementById('detailChart'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: tabLabel[tab],
+        data: values,
+        borderColor: '#03c75a',
+        backgroundColor: 'rgba(3,199,90,0.1)',
+        borderWidth: 2,
+        pointRadius: dotSize,
+        tension: 0.3,
+        fill: true,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: {
+        mode: 'index',
+        intersect: false,
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => hasVol
+              ? `${tabLabel[tab]}: ${ctx.parsed.y.toLocaleString()}회`
+              : `트렌드 지수: ${ctx.parsed.y}`
+          }
+        }
+      },
+      scales: {
+        x: { ticks: { maxTicksLimit: 8, maxRotation: 0 } },
+        y: {
+          beginAtZero: true,
+          ticks: hasVol ? { callback: v => v.toLocaleString() } : {},
+          ...(hasVol ? {} : { min: 0, max: 100 }),
+          title: { display: true, text: yLabel },
+        },
+      }
+    }
+  });
+}
+
+document.getElementById('modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('modal')) closeModal();
+});
+
+// ── CSV 다운로드 ─────────────────────────────────────────────────
+async function downloadCSV() {
+  if (!lastData) return;
+  const res = await fetch('/download', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keywords: lastData.keywords }),
+  });
+  const blob = await res.blob();
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = 'rising_keywords.csv'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── 카테고리 검색 자동완성 ────────────────────────────────────────
+let _catSearchTimer = null;
+
+function debounceCatSearch() {
+  clearTimeout(_catSearchTimer);
+  _catSearchTimer = setTimeout(doCatSearch, 250);
+}
+
+// ── 카테고리 조회 패널 ────────────────────────────────────────────
+let _cfrTimer = null;
+function catFinderSearch() {
+  clearTimeout(_cfrTimer);
+  _cfrTimer = setTimeout(_doCatFinderSearch, 400);
+}
+
+async function _doCatFinderSearch() {
+  const q   = document.getElementById('catFinderInput').value.trim();
+  const box = document.getElementById('catFinderResults');
+  if (!q) { box.innerHTML = ''; return; }
+
+  box.innerHTML = '<p class="text-xs text-gray-400 p-2">검색 중…</p>';
+  try {
+    const res  = await fetch(`/naver/category?q=${encodeURIComponent(q)}`);
+    const data = await res.json();
+
+    if (data.error) {
+      box.innerHTML = `<p class="text-xs text-red-400 p-2">오류: ${data.error}</p>`;
+      return;
+    }
+    if (!data.length) {
+      box.innerHTML = '<p class="text-xs text-gray-400 p-2">결과 없음</p>';
+      return;
+    }
+
+    box.innerHTML = data.map(c => {
+      const cidStr = c.cid ? `CID ${c.cid}` : '미매칭';
+      const clickable = c.cid ? `onclick="catFinderSelect(${c.cid},'${c.path.replace(/'/g,"\\'")}',event)"` : '';
+      const dimmed = c.cid ? '' : 'style="opacity:.5;cursor:default"';
+      return `<div class="cfr-item" ${clickable} ${dimmed}>
+        <div class="cfr-path">${c.path}</div>
+        <div class="flex items-center justify-between mt-1">
+          <span class="cfr-count">상품 ${c.count}건</span>
+          <span class="cfr-cid">${cidStr}</span>
+        </div>
+      </div>`;
+    }).join('');
+  } catch { box.innerHTML = '<p class="text-xs text-red-400 p-2">오류 발생</p>'; }
+}
+
+function catFinderSelect(cid, path, e) {
+  e && e.stopPropagation();
+  selCid  = cid;
+  selPath = path;
+  document.getElementById('catPath').textContent = `선택: ${path} (CID: ${cid})`;
+  document.getElementById('catSearch').value = path.split(' > ').pop();
+  document.getElementById('catDropdown').classList.add('hidden');
+  // 선택 피드백: 항목 하이라이트
+  document.querySelectorAll('.cfr-item').forEach(el => el.style.background = '');
+  if (e && e.currentTarget) e.currentTarget.style.background = '#dcfce7';
+}
+
+async function doCatSearch() {
+  const input = document.getElementById('catSearch');
+  const dd    = document.getElementById('catDropdown');
+  const q     = input.value.trim();
+
+  if (!q) { dd.classList.add('hidden'); return; }
+
+  const res  = await fetch(`/categories/search?q=${encodeURIComponent(q)}`);
+  const data = await res.json();
+
+  if (data.loading) {
+    dd.innerHTML = '<div class="px-4 py-3 text-sm text-gray-400">카테고리 인덱스 빌드 중… 잠시 후 다시 시도해 주세요.</div>';
+    dd.classList.remove('hidden');
+    // 4초 후 자동 재시도
+    setTimeout(doCatSearch, 4000);
+    return;
+  }
+
+  if (!Array.isArray(data) || data.length === 0) {
+    dd.innerHTML = '<div class="px-4 py-3 text-sm text-gray-400">검색 결과 없음</div>';
+    dd.classList.remove('hidden');
+    return;
+  }
+
+  dd.innerHTML = data.map(c => {
+    const hl = c.name.replace(new RegExp(`(${q})`, 'gi'),
+      '<mark class="bg-green-100 text-green-800 rounded px-0.5">$1</mark>');
+    const lvlBadge = c.level === 3 || c.level === 4
+      ? '' : `<span class="text-gray-300 text-xs ml-1">(상위 카테고리)</span>`;
+    return `<div class="px-4 py-2.5 hover:bg-green-50 cursor-pointer border-b border-gray-100 last:border-0"
+                 onclick="selectCatSearch(${c.cid}, '${c.path.replace(/'/g,"\\'")}', '${c.name.replace(/'/g,"\\'")}')">
+      <div class="text-sm font-semibold text-gray-800">${hl}${lvlBadge}</div>
+      <div class="text-xs text-gray-400 mt-0.5">${c.path}</div>
+    </div>`;
+  }).join('');
+  dd.classList.remove('hidden');
+}
+
+function selectCatSearch(cid, path, name) {
+  selCid  = String(cid);
+  selPath = path;
+  document.getElementById('catSearch').value = name;
+  document.getElementById('catDropdown').classList.add('hidden');
+  document.getElementById('catPath').textContent = `선택: ${path} (CID: ${cid})`;
+  // 드롭다운 초기화
+  const sel1 = document.getElementById('cat1');
+  const sel2 = document.getElementById('cat2');
+  const sel3 = document.getElementById('cat3');
+  sel1.value = '';
+  sel2.innerHTML = '<option value="">— 선택 —</option>'; sel2.disabled = true;
+  sel3.innerHTML = '<option value="">— 선택 —</option>'; sel3.disabled = true;
+  catNames.cat1 = catNames.cat2 = catNames.cat3 = '';
+}
+
+// 드롭다운 외부 클릭 시 닫기
+document.addEventListener('click', e => {
+  if (!e.target.closest('#catSearchWrapper')) {
+    document.getElementById('catDropdown').classList.add('hidden');
+  }
+});
+
+// ── 카테고리 인덱스 상태 polling ──────────────────────────────────
+let _catStatusTimer = null;
+
+async function checkCatStatus() {
+  try {
+    const res  = await fetch('/categories/status');
+    const data = await res.json();
+    const el   = document.getElementById('catIndexStatus');
+    if (data.status === 'ready') {
+      el.textContent = `검색 인덱스 준비됨 (${data.count.toLocaleString()}개)`;
+      el.style.color = '#03c75a';
+      clearInterval(_catStatusTimer);
+      _catStatusTimer = null;
+    } else {
+      el.textContent = '카테고리 인덱스 빌드 중…';
+      el.style.color = '#f59e0b';
+    }
+  } catch {}
+}
+
+async function startCatStatusPolling() {
+  await checkCatStatus();
+  const el = document.getElementById('catIndexStatus');
+  if (el.style.color !== 'rgb(3, 199, 90)') {
+    _catStatusTimer = setInterval(checkCatStatus, 4000);
+  }
+}
+
+// ── 초기화 ──────────────────────────────────────────────────────
+loadCat1();
+startCatStatusPolling();
+</script>
+</body>
+</html>

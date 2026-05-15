@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+_archive/
+dev/
+src/
+spec/
+out/
+dd/
+*.csv
+*.json.bak
+cat_leaf.txt
+cat_list.txt
+cat_utf8.json
+check_out.txt
+cid_lookup.txt
+새 텍스트 문서.txt
+서버시작.bat
+클로드시작.bat
+NAVER-API-SPEC.md
+NAVER_API_SPEC.md
+api.txt
