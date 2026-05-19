@@ -368,6 +368,36 @@ def _searchad_call(hint_keywords: list[str]) -> dict[str, int]:
     return result
 
 
+def _searchad_call_split(hint_keywords: list[str]) -> dict[str, dict]:
+    """Search Ad API 호출 → {keyword: {pc, mobile, total}}"""
+    uri = "/keywordstool"
+    ts  = str(round(time.time() * 1000))
+    sig = _sign(ts, "GET", uri)
+    params = urllib.parse.urlencode({"hintKeywords": ",".join(hint_keywords), "showDetail": "1"})
+    url = SEARCHAD_BASE + uri + "?" + params
+    req = urllib.request.Request(url)
+    req.add_header("Content-Type", "application/json; charset=UTF-8")
+    req.add_header("X-Timestamp",  ts)
+    req.add_header("X-API-KEY",    API_KEY)
+    req.add_header("X-Customer",   CUSTOMER_ID)
+    req.add_header("X-Signature",  sig)
+    result: dict[str, dict] = {}
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            kws = json.loads(r.read().decode())["keywordList"]
+        hint_lower = {kw.lower(): kw for kw in hint_keywords}
+        for k in kws:
+            rel = k.get("relKeyword", "")
+            original = hint_lower.get(rel.lower())
+            if original:
+                pc = _to_int(k.get("monthlyPcQcCnt", 0))
+                mo = _to_int(k.get("monthlyMobileQcCnt", 0))
+                result[original] = {"pc": pc, "mobile": mo, "total": pc + mo}
+    except Exception:
+        pass
+    return result
+
+
 def _searchad_monthly_batch(keywords: list[str]) -> dict[str, int]:
     """여러 키워드 월간 검색량 일괄 조회 (5개씩 배치)"""
     vol_map: dict[str, int] = {}
@@ -458,6 +488,19 @@ def _is_excluded(keyword: str, extra: set[str]) -> bool:
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.route("/keyword", methods=["POST"])
+def keyword_lookup():
+    body = request.get_json(force=True)
+    kw = (body.get("keyword") or "").strip()
+    if not kw:
+        return jsonify({"error": "키워드를 입력해 주세요."}), 400
+    res = _searchad_call_split([kw])
+    if kw not in res:
+        return jsonify({"error": "검색량을 찾지 못했습니다."}), 404
+    v = res[kw]
+    return jsonify({"keyword": kw, "pc": v["pc"], "mobile": v["mobile"], "total": v["total"]})
 
 
 @app.route("/analyze", methods=["POST"])

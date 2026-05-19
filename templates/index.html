@@ -100,11 +100,26 @@
 <body class="min-h-screen p-3 md:p-6">
 
   <!-- 헤더 -->
-  <div class="max-w-5xl mx-auto mb-6">
+  <div class="max-w-5xl mx-auto mb-4">
     <h1 class="text-2xl font-bold text-gray-800">
       <span style="color:#03c75a">N</span> 쇼핑인사이트 급상승 키워드 분석
     </h1>
     <p class="text-sm text-gray-500 mt-1">쇼핑인사이트 인기검색어 + 데이터랩으로 신생·급상승 키워드를 자동 추출합니다.</p>
+  </div>
+
+  <!-- 빠른 키워드 조회 -->
+  <div class="max-w-5xl mx-auto card p-4 mb-4">
+    <div class="flex items-center gap-2 mb-2">
+      <span class="text-sm font-semibold text-gray-700">키워드 검색량 빠른 조회</span>
+      <span class="text-xs text-gray-400 hidden sm:inline">— 단일 키워드의 월간 검색량을 바로 확인</span>
+    </div>
+    <div class="flex gap-2 items-center">
+      <input id="quickKw" type="text" class="cat-select flex-1" placeholder="예: 다이어트, 선크림"
+             autocomplete="off"
+             onkeydown="if(event.key==='Enter'){quickLookup();}">
+      <button id="quickBtn" class="btn-primary" style="white-space:nowrap; padding:8px 18px;" onclick="quickLookup()">조회</button>
+    </div>
+    <div id="quickResult" class="text-sm text-gray-700 mt-3" style="display:none;"></div>
   </div>
 
   <!-- 입력 카드 -->
@@ -294,6 +309,38 @@ let activeTab   = 'daily';
 let selCid = '';
 let selPath = '';
 let catNames = { cat1: '', cat2: '', cat3: '' };
+
+// ── 빠른 키워드 조회 ───────────────────────────────────────────
+async function quickLookup() {
+  const kw  = document.getElementById('quickKw').value.trim();
+  const out = document.getElementById('quickResult');
+  const btn = document.getElementById('quickBtn');
+  if (!kw) { out.style.display = 'none'; return; }
+  btn.disabled = true;
+  out.style.display = 'block';
+  out.innerHTML = '<span class="text-gray-400">조회 중…</span>';
+  try {
+    const r = await fetch('/keyword', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ keyword: kw }),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      out.innerHTML = `<span class="text-red-600">${d.error || '오류'}</span>`;
+      return;
+    }
+    const fmt = n => n.toLocaleString('ko-KR');
+    out.innerHTML =
+      `<strong class="text-gray-900">${d.keyword}</strong>` +
+      ` → 월 <strong style="color:#03c75a">${fmt(d.total)}</strong>회` +
+      ` <span class="text-gray-500">(PC ${fmt(d.pc)} · 모바일 ${fmt(d.mobile)})</span>`;
+  } catch (e) {
+    out.innerHTML = '<span class="text-red-600">네트워크 오류</span>';
+  } finally {
+    btn.disabled = false;
+  }
+}
 
 // ── 카테고리 로딩 ──────────────────────────────────────────────
 async function fetchCats(cid) {
