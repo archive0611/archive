@@ -413,6 +413,78 @@ def _searchad_monthly(keyword: str) -> int:
     return result.get(keyword, 0)
 
 
+def _searchad_volumes(keywords: list[str]) -> dict[str, dict]:
+    """주어진 키워드들의 검색량을 공백 무시 매칭으로 조회 → {원본키워드: {pc,mobile,total}}
+
+    검색광고 API는 relKeyword를 공백 없이 돌려주므로(예: '강민경 남편' → '강민경남편')
+    공백 제거 후 대조한다.
+    """
+    if not keywords:
+        return {}
+    uri = "/keywordstool"
+    ts  = str(round(time.time() * 1000))
+    sig = _sign(ts, "GET", uri)
+    # 검색광고 API는 공백 포함 키워드를 거부(400)하므로 공백 제거해 전송
+    hints = [kw.replace(" ", "") for kw in keywords]
+    params = urllib.parse.urlencode({"hintKeywords": ",".join(hints), "showDetail": "1"})
+    url = SEARCHAD_BASE + uri + "?" + params
+    req = urllib.request.Request(url)
+    req.add_header("Content-Type", "application/json; charset=UTF-8")
+    req.add_header("X-Timestamp",  ts)
+    req.add_header("X-API-KEY",    API_KEY)
+    req.add_header("X-Customer",   CUSTOMER_ID)
+    req.add_header("X-Signature",  sig)
+    result: dict[str, dict] = {}
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            kws = json.loads(r.read().decode())["keywordList"]
+        norm_map = {kw.replace(" ", "").lower(): kw for kw in keywords}
+        for k in kws:
+            rel = k.get("relKeyword", "").replace(" ", "").lower()
+            original = norm_map.get(rel)
+            if original:
+                pc = _to_int(k.get("monthlyPcQcCnt", 0))
+                mo = _to_int(k.get("monthlyMobileQcCnt", 0))
+                result[original] = {"pc": pc, "mobile": mo, "total": pc + mo}
+    except Exception:
+        pass
+    return result
+
+
+def _naver_autocomplete(keyword: str) -> list[str]:
+    """네이버 자동완성 → 세부 키워드 후보
+
+    예: '강민경' → '강민경 남편', '강민경 결혼', '강민경 화장품' …
+    검색광고 연관키워드(keywordstool)는 인물명에서 자기 자신만 돌려주는 경우가
+    많아, 세부 키워드는 자동완성에서 가져온다.
+    """
+    url = "https://ac.search.naver.com/nx/ac?" + urllib.parse.urlencode({
+        "q": keyword, "con": "0", "frm": "nv", "ans": "2",
+        "r_format": "json", "r_enc": "UTF-8", "r_unicode": "0",
+        "t_koreng": "1", "run": "2", "rev": "4", "q_enc": "UTF-8", "st": "100",
+    })
+    req = urllib.request.Request(url)
+    req.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0")
+    req.add_header("Referer", "https://search.naver.com/")
+    out: list[str] = []
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        for group in data.get("items", []):
+            for entry in group:
+                if isinstance(entry, list) and entry and entry[0]:
+                    out.append(entry[0].strip())
+    except Exception:
+        pass
+    seen: set = set()
+    res: list[str] = []
+    for k in out:
+        if k and k not in seen:
+            seen.add(k)
+            res.append(k)
+    return res
+
+
 # ── 데이터랩 API ──────────────────────────────────────────────────────
 def _datalab_trend(keyword_list: list[str], start: str, end: str) -> dict:
     groups = [{"groupName": kw, "keywords": [kw]} for kw in keyword_list]
@@ -496,11 +568,54 @@ def keyword_lookup():
     kw = (body.get("keyword") or "").strip()
     if not kw:
         return jsonify({"error": "키워드를 입력해 주세요."}), 400
-    res = _searchad_call_split([kw])
-    if kw not in res:
+
+    kw_norm = kw.replace(" ", "").lower()
+
+    # 1) 본 키워드 검색량
+    main_res = _searchad_call_split([kw])
+    if kw not in main_res:
         return jsonify({"error": "검색량을 찾지 못했습니다."}), 404
-    v = res[kw]
-    return jsonify({"keyword": kw, "pc": v["pc"], "mobile": v["mobile"], "total": v["total"]})
+    mv = main_res[kw]
+    main = {"keyword": kw, "pc": mv["pc"], "mobile": mv["mobile"], "total": mv["total"]}
+
+    # 2) 세부(연관) 키워드: 자동완성에서 본 키워드를 포함하는 후보만 추림
+    candidates = [
+        c for c in _naver_autocomplete(kw)
+        if kw_norm in c.replace(" ", "").lower()
+        and c.replace(" ", "").lower() != kw_norm
+    ][:30]
+
+    # 후보별 검색량 조회 (5개씩 배치) → 검색량 있는 것만, 합산
+    related: list[dict] = []
+    for batch in _chunked(candidates, 5):
+        vols = _searchad_volumes(batch)
+        for c in batch:
+            v = vols.get(c)
+            if v and v["total"] > 0:
+                related.append({"keyword": c, "pc": v["pc"], "mobile": v["mobile"], "total": v["total"]})
+        time.sleep(0.2)
+    related.sort(key=lambda r: r["total"], reverse=True)
+    related_sum = sum(r["total"] for r in related)
+
+    # 3) 연간 추이 (최근 3년 월간) — 본 키워드 기준, 최근 실제 검색량으로 스케일
+    end_dt = date.today() - timedelta(days=1)
+    prev_month_end = end_dt.replace(day=1) - timedelta(days=1)
+    yearly_series = _dl_monthly_call(
+        kw,
+        (prev_month_end - timedelta(days=365 * 3)).isoformat(),
+        prev_month_end.isoformat(),
+    )
+    yearly = _scale_monthly(yearly_series, main["total"])
+
+    return jsonify({
+        "keyword":     main["keyword"],
+        "pc":          main["pc"],
+        "mobile":      main["mobile"],
+        "total":       main["total"],
+        "related":     related,
+        "related_sum": related_sum,
+        "yearly":      yearly,
+    })
 
 
 @app.route("/analyze", methods=["POST"])
