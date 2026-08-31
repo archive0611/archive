@@ -182,46 +182,50 @@ if os.environ.get('WERKZEUG_RUN_MAIN') != 'false':
     threading.Thread(target=_build_cat_flat, daemon=True).start()
 
 
+# 쇼핑 검색 API(/v1/search/shop.json)는 2026-07-31 네이버가 종료(SE05) →
+# 내부 카테고리 트리(약 5천개) + keyword_map 로컬 매칭으로 대체
 @app.route("/naver/category")
 def naver_product_category():
     q = request.args.get("q", "").strip()
     if not q:
         return jsonify([])
+    if _cat_flat is None:
+        return jsonify({"error": "카테고리 로딩 중입니다. 잠시 후 다시 시도해 주세요."}), 503
 
-    url = "https://openapi.naver.com/v1/search/shop.json?" + urllib.parse.urlencode({
-        "query": q, "display": 20, "start": 1, "sort": "sim"
-    })
-    req = urllib.request.Request(url)
-    req.add_header("X-Naver-Client-Id",     CLIENT_ID)
-    req.add_header("X-Naver-Client-Secret", CLIENT_SECRET)
+    qn = q.replace(" ", "").lower()
+    cid_map = {c["cid"]: c for c in _cat_flat}
+    results: list[dict] = []
+    seen: set = set()
 
-    try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            data = json.loads(r.read().decode())
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    def _add(cat, label):
+        if cat["cid"] in seen:
+            return
+        seen.add(cat["cid"])
+        results.append({"path": cat["path"], "cid": cat["cid"], "match": label})
 
-    # 카테고리 경로별 집계
-    from collections import Counter
-    cat_counter: Counter = Counter()
-    for item in data.get("items", []):
-        parts = [item.get(f"category{i}", "") for i in range(1, 5)]
-        parts = [p for p in parts if p]
-        if parts:
-            cat_counter[" > ".join(parts)] += 1
+    # 1) keyword_map 정확 매핑 우선
+    mapped_cid = _keyword_map.get(q) or _keyword_map.get(qn)
+    if mapped_cid and mapped_cid in cid_map:
+        _add(cid_map[mapped_cid], "키워드 매핑")
 
-    # 내부 카테고리 트리와 매칭해 CID 조회 (가장 구체적인 경로부터 역으로 탐색)
-    path_to_cid = {c["path"]: c["cid"] for c in (_cat_flat or [])}
-    results = []
-    for path, count in cat_counter.most_common(10):
-        cid = None
-        test = path
-        while test and cid is None:
-            cid = path_to_cid.get(test)
-            test = test.rsplit(" > ", 1)[0] if " > " in test else None
-        results.append({"path": path, "count": count, "cid": cid})
+    # 2) 카테고리명 매칭: 정확일치 > 시작일치 > 포함 (동순위면 더 구체적인 하위분류 우선)
+    def _rank(c):
+        name = c["name"].replace(" ", "").lower()
+        if name == qn:
+            tier = 0
+        elif name.startswith(qn):
+            tier = 1
+        elif qn in name:
+            tier = 2
+        else:
+            tier = 3
+        return (tier, -c["level"], c["name"])
 
-    return jsonify(results)
+    matched = [c for c in _cat_flat if qn in c["name"].replace(" ", "").lower()]
+    for c in sorted(matched, key=_rank):
+        _add(c, "이름 일치")
+
+    return jsonify(results[:10])
 
 
 @app.route("/categories/rebuild", methods=["POST"])

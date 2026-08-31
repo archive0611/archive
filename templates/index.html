@@ -814,7 +814,7 @@ async function _doCatFinderSearch() {
       return `<div class="cfr-item" ${clickable} ${dimmed}>
         <div class="cfr-path">${c.path}</div>
         <div class="flex items-center justify-between mt-1">
-          <span class="cfr-count">상품 ${c.count}건</span>
+          <span class="cfr-count">${c.match || ''}</span>
           <span class="cfr-cid">${cidStr}</span>
         </div>
       </div>`;
