@@ -182,50 +182,69 @@ if os.environ.get('WERKZEUG_RUN_MAIN') != 'false':
     threading.Thread(target=_build_cat_flat, daemon=True).start()
 
 
-# 쇼핑 검색 API(/v1/search/shop.json)는 2026-07-31 네이버가 종료(SE05) →
-# 내부 카테고리 트리(약 5천개) + keyword_map 로컬 매칭으로 대체
+# 쇼핑 검색 API(/v1/search/shop.json)는 2026-07-31 네이버가 종료(SE05).
+# 쇼핑 전용 페이지(search.shopping.naver.com)는 봇차단(418)이지만
+# 통합검색(search.naver.com) HTML의 쇼핑 블록에 상품별 cat_id가 들어있어 이를 파싱한다.
 @app.route("/naver/category")
 def naver_product_category():
+    import re
+    from collections import Counter
+
     q = request.args.get("q", "").strip()
     if not q:
         return jsonify([])
-    if _cat_flat is None:
-        return jsonify({"error": "카테고리 로딩 중입니다. 잠시 후 다시 시도해 주세요."}), 503
 
-    qn = q.replace(" ", "").lower()
-    cid_map = {c["cid"]: c for c in _cat_flat}
-    results: list[dict] = []
-    seen: set = set()
+    url = "https://search.naver.com/search.naver?" + urllib.parse.urlencode({"query": q})
+    req = urllib.request.Request(url)
+    req.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                   "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+    req.add_header("Referer", "https://www.naver.com/")
+    req.add_header("Accept-Language", "ko-KR,ko;q=0.9")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            html = r.read().decode("utf-8", errors="replace")
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-    def _add(cat, label):
-        if cat["cid"] in seen:
-            return
-        seen.add(cat["cid"])
-        results.append({"path": cat["path"], "cid": cat["cid"], "match": label})
+    # 상품별 (nv_mid, cat_id) 추출 — pc/mobile URL 중복은 set으로 제거
+    pairs = set(re.findall(r"nv_mid=(\d+)&(?:amp;)?cat_id=(\d{8})", html))
+    counter = Counter(int(cid) for _, cid in pairs)
 
-    # 1) keyword_map 정확 매핑 우선
-    mapped_cid = _keyword_map.get(q) or _keyword_map.get(qn)
-    if mapped_cid and mapped_cid in cid_map:
-        _add(cid_map[mapped_cid], "키워드 매핑")
+    cid_map = {c["cid"]: c for c in (_cat_flat or [])}
+    results = []
+    for cid, count in counter.most_common(10):
+        cat = cid_map.get(cid)
+        path = cat["path"] if cat else None
+        if path is None:
+            # 로컬 트리에 없는 카테고리(신규/4단계 이하)는 getCategory로 경로 조회
+            try:
+                path = _get_category(cid).get("fullPath")
+            except Exception:
+                path = None
+        results.append({
+            "path":  path or f"(미등록 카테고리 {cid})",
+            "count": count,
+            "cid":   cid if path else None,
+        })
 
-    # 2) 카테고리명 매칭: 정확일치 > 시작일치 > 포함 (동순위면 더 구체적인 하위분류 우선)
-    def _rank(c):
-        name = c["name"].replace(" ", "").lower()
-        if name == qn:
-            tier = 0
-        elif name.startswith(qn):
-            tier = 1
-        elif qn in name:
-            tier = 2
-        else:
-            tier = 3
-        return (tier, -c["level"], c["name"])
+    # 쇼핑 블록이 없으면 카테고리명 로컬 매칭으로 폴백
+    if not results and _cat_flat:
+        qn = q.replace(" ", "").lower()
+        mapped_cid = _keyword_map.get(q) or _keyword_map.get(qn)
+        if mapped_cid and mapped_cid in cid_map:
+            c = cid_map[mapped_cid]
+            results.append({"path": c["path"], "cid": c["cid"], "match": "키워드 매핑"})
+        matched = [c for c in _cat_flat if qn in c["name"].replace(" ", "").lower()
+                   and c["cid"] != mapped_cid]
+        matched.sort(key=lambda c: (
+            0 if c["name"].replace(" ", "").lower() == qn else
+            1 if c["name"].replace(" ", "").lower().startswith(qn) else 2,
+            -c["level"], c["name"]))
+        results.extend({"path": c["path"], "cid": c["cid"], "match": "이름 일치"}
+                       for c in matched)
+        results = results[:10]
 
-    matched = [c for c in _cat_flat if qn in c["name"].replace(" ", "").lower()]
-    for c in sorted(matched, key=_rank):
-        _add(c, "이름 일치")
-
-    return jsonify(results[:10])
+    return jsonify(results)
 
 
 @app.route("/categories/rebuild", methods=["POST"])
