@@ -1,0 +1,48 @@
+{% extends "_auth_base.html" %}
+{% block title %}계정 관리{% endblock %}
+{% block wrapcls %}md:max-w-2xl{% endblock %}
+{% block content %}
+<div class="card p-6">
+  <div class="flex items-center justify-between mb-3">
+    <span class="font-semibold text-gray-800">계정 관리 <span class="text-xs text-gray-400">관리자 전용</span></span>
+    <a href="/" class="text-sm text-gray-500 hover:underline">← 돌아가기</a>
+  </div>
+  {% if msg %}<p class="text-sm text-green-600 mb-2">{{ msg }}</p>{% endif %}
+  {% if err %}<p class="text-sm text-red-500 mb-2">{{ err }}</p>{% endif %}
+  <div class="overflow-x-auto">
+  <table class="w-full text-sm">
+    <thead><tr class="text-left text-gray-500 border-b"><th class="py-2">아이디</th><th>권한</th><th>비밀번호 재설정</th><th></th></tr></thead>
+    <tbody>
+    {% for name, u in rows %}
+      <tr class="border-b last:border-0">
+        <td class="py-2 font-medium text-gray-800">{{ name }}</td>
+        <td>{% if u.admin %}<span class="text-xs font-semibold text-green-700 bg-green-50 rounded px-2 py-0.5">관리자</span>{% else %}<span class="text-xs text-gray-500">일반</span>{% endif %}</td>
+        <td>
+          <form method="post" class="flex gap-1">
+            <input type="hidden" name="action" value="reset"><input type="hidden" name="name" value="{{ name }}">
+            <input class="inp" style="width:120px;padding:5px 8px" type="text" name="password" placeholder="새 비번" minlength="4" autocomplete="off" required>
+            <button class="btn-sm">재설정</button>
+          </form>
+        </td>
+        <td class="text-right">
+          {% if name != auth_user %}
+          <form method="post" onsubmit="return confirm('{{ name }} 계정을 삭제할까요?')">
+            <input type="hidden" name="action" value="delete"><input type="hidden" name="name" value="{{ name }}">
+            <button class="btn-sm" style="color:#dc2626">삭제</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <form method="post" class="flex flex-wrap gap-2 items-center mt-4">
+    <input type="hidden" name="action" value="add">
+    <input class="inp" style="width:130px" name="name" placeholder="이름" autocomplete="off" required>
+    <input class="inp" style="width:140px" type="text" name="password" placeholder="초기 비번 (4자+)" minlength="4" autocomplete="off" required>
+    <label class="text-sm text-gray-600 flex items-center gap-1"><input type="checkbox" name="admin" value="1"> 관리자</label>
+    <button class="btn-primary" style="padding:8px 18px">추가</button>
+  </form>
+</div>
+{% endblock %}

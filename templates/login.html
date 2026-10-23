@@ -1,0 +1,19 @@
+{% extends "_auth_base.html" %}
+{% block title %}로그인{% endblock %}
+{% block content %}
+<div class="card p-6">
+  <form method="post" class="space-y-3">
+    <label class="block">
+      <span class="text-sm font-semibold text-gray-700">아이디 (이름)</span>
+      <input class="inp mt-1" name="username" autocomplete="username" autofocus required>
+    </label>
+    <label class="block">
+      <span class="text-sm font-semibold text-gray-700">비밀번호</span>
+      <input class="inp mt-1" type="password" name="password" autocomplete="current-password" required>
+    </label>
+    {% if no_accounts %}<p class="text-sm text-red-500">계정이 없습니다 — 관리자에게 문의하세요.</p>{% endif %}
+    {% if error %}<p class="text-sm text-red-500">{{ error }}</p>{% endif %}
+    <button class="btn-primary w-full">로그인</button>
+  </form>
+</div>
+{% endblock %}

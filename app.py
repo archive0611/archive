@@ -9,6 +9,10 @@ from flask import Flask, jsonify, render_template, request, Response
 
 app = Flask(__name__)
 
+# 개인 계정 로그인 게이트 (auth.py)
+from auth import init_auth
+init_auth(app)
+
 # ── API 자격증명 ──────────────────────────────────────────────────────
 CLIENT_ID     = "WRi5ZynoxSJgIsO7KxVW"
 CLIENT_SECRET = "NbbB7j_aWk"

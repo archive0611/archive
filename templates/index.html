@@ -98,9 +98,26 @@
   </style>
 </head>
 <body class="min-h-screen p-3 md:p-6">
+<script>
+  // 세션 만료 시 API 401 → 로그인 화면으로
+  (function () {
+    const _f = window.fetch;
+    window.fetch = async function () {
+      const r = await _f.apply(this, arguments);
+      if (r.status === 401) location.href = '/login?next=/';
+      return r;
+    };
+  })();
+</script>
 
   <!-- 헤더 -->
   <div class="max-w-5xl mx-auto mb-4">
+    <div class="flex justify-end gap-3 text-xs text-gray-500 mb-1">
+      <span>{{ auth_user }}</span>
+      {% if auth_is_admin %}<a href="/admin/users" class="hover:underline">계정 관리</a>{% endif %}
+      <a href="/password" class="hover:underline">비밀번호 변경</a>
+      <a href="/logout" class="hover:underline">로그아웃</a>
+    </div>
     <h1 class="text-2xl font-bold text-gray-800">
       <span style="color:#03c75a">N</span> 쇼핑인사이트 급상승 키워드 분석
     </h1>

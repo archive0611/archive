@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}로그인{% endblock %} — 네이버 쇼핑인사이트 급상승 키워드 분석</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #f8fafc; }
+    .card { background: #fff; border-radius: 12px; box-shadow: 0 1px 6px rgba(0,0,0,.08); }
+    .btn-primary { background: #03c75a; color: #fff; font-weight: 600; padding: 10px 28px;
+      border-radius: 8px; border: none; cursor: pointer; transition: background .15s; }
+    .btn-primary:hover { background: #02b350; }
+    .btn-sm { padding: 6px 12px; border-radius: 6px; font-size: 13px; font-weight: 600; border: 1px solid #d1d5db; background: #fff; cursor: pointer; }
+    .btn-sm:hover { background: #f9fafb; }
+    .inp { width: 100%; border: 1px solid #d1d5db; border-radius: 8px; padding: 9px 12px; font-size: 14px; }
+    .inp:focus { outline: none; border-color: #03c75a; box-shadow: 0 0 0 3px rgba(3,199,90,.15); }
+  </style>
+</head>
+<body class="min-h-screen p-3 md:p-6">
+  <div class="max-w-md mx-auto mt-6 md:mt-16 {% block wrapcls %}{% endblock %}">
+    <h1 class="text-xl font-bold text-gray-800 mb-4">
+      <a href="/"><span style="color:#03c75a">N</span> 쇼핑인사이트 급상승 키워드 분석</a>
+    </h1>
+    {% block content %}{% endblock %}
+    {% if not auth_persistent %}
+    <p class="text-xs text-amber-700 bg-amber-50 rounded-lg p-3 mt-4">
+      ⚠ 영구 저장소(Railway Volume)가 아직 연결되지 않아, 바꾼 비밀번호·추가한 계정은 재배포 시 초기 계정으로 되돌아갑니다.
+    </p>
+    {% endif %}
+  </div>
+</body>
+</html>
