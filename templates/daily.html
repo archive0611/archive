@@ -28,17 +28,17 @@
   {% if r.keywords %}
   <div class="overflow-x-auto"><table class="w-full text-sm">
     <tr class="text-left text-xs text-gray-500"><th class="py-1 px-2">#</th><th class="px-2">어제 대비</th><th class="px-2">키워드</th><th class="px-2 text-right">급상승 점수</th>
-      <th class="px-2 text-center">검색량 순위</th><th class="px-2 text-center">쇼핑 순위</th><th class="px-2 text-right">성장률</th><th class="px-2 text-right">월간 검색량</th><th></th></tr>
+      <th class="px-2 text-center">검색량 순위</th><th class="px-2 text-center">쇼핑 순위</th><th class="px-2 text-right">성장률</th><th class="px-2 text-right">월간 검색량</th></tr>
     {% for k in r.keywords[:40] %}
-    <tr class="border-t border-gray-100">
+    <tr class="border-t border-gray-100 kw-row">
       <td class="py-1 px-2 text-gray-400">{{ k.rise_rank }}</td>
       <td class="px-2 text-xs">{% if k.rank_change is none %}<span class="text-red-600 font-bold">NEW</span>{% elif k.rank_change > 0 %}<span class="text-red-600">▲{{ k.rank_change }}</span>{% elif k.rank_change < 0 %}<span class="text-blue-600">▼{{ -k.rank_change }}</span>{% else %}<span class="text-gray-400">–</span>{% endif %}</td>
-      <td class="px-2 font-semibold">{{ k.keyword }}</td>
+      <td class="px-2 font-semibold whitespace-nowrap"><span class="kw-text">{{ k.keyword }}</span>
+        <button type="button" class="bl-btn" title="블랙리스트에 넣기 (이 카테고리에서 다음부터 제외)" data-cid="{{ j.cid }}" data-kw="{{ k.keyword }}" onclick="toggleBlack(this)">✕</button></td>
       <td class="px-2 text-right font-bold">{{ k.rise_score }}</td>
       <td class="px-2 text-center">{{ k.vol_rank }}</td><td class="px-2 text-center">{{ k.si_rank }}</td>
       <td class="px-2 text-right {{ 'text-red-600' if k.growth >= 1.5 }}">{{ k.growth }}x</td>
       <td class="px-2 text-right text-gray-500">{{ '{:,}'.format(k.monthly_vol or 0) }}</td>
-      <td class="px-2"><a href="#" title="블랙리스트에 넣기" class="text-gray-400 hover:text-red-600" onclick="black('{{ j.cid }}', {{ k.keyword|tojson|forceescape }}, true);return false">✕</a></td>
     </tr>{% endfor %}
   </table></div>
   {% else %}<p class="text-sm text-gray-400">아직 결과가 없어요. 1~3분 뒤 새로고침하세요.</p>{% endif %}
@@ -46,7 +46,29 @@
 {% else %}
 <div class="card p-5 text-sm text-gray-500">아직 매일 수집하는 카테고리가 없어요. 분석 화면에서 카테고리를 분석한 뒤 결과 위 '매일 수집'을 누르세요.</div>
 {% endfor %}
+<style>
+.bl-btn{margin-left:6px;padding:0 6px;border:1px solid #e5e7eb;border-radius:4px;font-size:11px;font-weight:400;color:#9ca3af;background:#fff;cursor:pointer;line-height:18px}
+.bl-btn:hover{color:#dc2626;border-color:#fca5a5;background:#fef2f2}
+tr.blacked td{opacity:.35}
+tr.blacked .kw-text{text-decoration:line-through}
+tr.blacked td:has(.bl-btn){opacity:1}
+tr.blacked .bl-btn{color:#2563eb;border-color:#bfdbfe;background:#eff6ff}
+</style>
 <script>
+// ✕ = 블랙리스트 넣기 → 그 줄 회색+취소선, 버튼이 '되돌리기'로 바뀜 (새로고침 없이). 다시 누르면 해제.
+async function toggleBlack(btn){
+  const row = btn.closest('tr'), on = !row.classList.contains('blacked');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/blacklist',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({cid:btn.dataset.cid, keyword:btn.dataset.kw, on})});
+    if(!r.ok) throw new Error(r.status);
+    row.classList.toggle('blacked', on);
+    btn.textContent = on ? '되돌리기' : '✕';
+    btn.title = on ? '블랙리스트에서 빼기' : '블랙리스트에 넣기 (이 카테고리에서 다음부터 제외)';
+  } catch(e){ alert('저장 실패: ' + e.message); }
+  btn.disabled = false;
+}
 async function act(url){ await fetch(url,{method:'POST'}); setTimeout(()=>location.reload(), 600); }
 async function black(cid, keyword, on){
   await fetch('/blacklist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cid,keyword,on})});
