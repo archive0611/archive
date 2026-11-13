@@ -66,6 +66,9 @@ def set_black(cid, keyword, on=True):
 
 
 # ── 매일 수집 작업 ─────────────────────────────────────────────────
+# 광고 위키가 결과를 어느 브랜드 몫으로 가져갈지 (11-14). 값은 광고 위키 brand 코드와 같아야 함.
+BRANDS = {"moniv": "모니브", "holdlab": "홀드랩"}
+
 PARAM_KEYS = ("cid", "cat_name", "days", "max_pages", "top_n", "min_monthly", "exclude_keywords")
 
 
@@ -178,6 +181,7 @@ def init(app, run_analysis):
             j = next((x for x in js if x["id"] == jid), None)
             if not j:
                 return jsonify(ok=False, error="작업이 없어요"), 404
+            before = {k: j.get(k) for k in PARAM_KEYS}
             try:
                 j["days"] = max(31, min(int(b.get("days", j.get("days") or 90)), 365))
                 j["max_pages"] = max(1, min(int(b.get("max_pages", j.get("max_pages") or 5)), 25))
@@ -185,11 +189,15 @@ def init(app, run_analysis):
                 j["min_monthly"] = max(0, int(b.get("min_monthly", j.get("min_monthly") or 0)))
             except (TypeError, ValueError):
                 return jsonify(ok=False, error="숫자로 넣어 주세요"), 400
+            if "brand" in b:
+                j["brand"] = b.get("brand") if b.get("brand") in BRANDS else ""
             if "exclude_keywords" in b:
                 j["exclude_keywords"] = str(b.get("exclude_keywords") or "").strip()
             _write(JOBS, js)
-        threading.Thread(target=run_job, args=(jid,), daemon=True).start()
-        return jsonify(ok=True, job=j)
+            changed = before != {k: j.get(k) for k in PARAM_KEYS}
+        if changed:          # 브랜드만 바꾼 거면 다시 분석 안 함
+            threading.Thread(target=run_job, args=(jid,), daemon=True).start()
+        return jsonify(ok=True, job=j, rerun=changed)
 
     @app.post("/daily/<jid>/delete")
     def daily_delete(jid):
@@ -224,18 +232,18 @@ def init(app, run_analysis):
                          "collected_at": today[1].get("collected_at") if today else None,
                          "keywords": _with_change(today[1], prev) if today else [],
                          "blacklist": get_blacklist(j["cid"]), "running": j["id"] in _running})
-        return render_template("daily.html", rows=rows, hour=DAILY_HOUR_KST)
+        return render_template("daily.html", rows=rows, hour=DAILY_HOUR_KST, brands=BRANDS)
 
     @app.get("/api/daily/latest")
     def daily_latest():
-        """광고 위키용: 매일 수집 작업마다 최신 결과 (급상승 점수순, 어제 대비 변화 포함)."""
+        """광고 위키용: 매일 수집 작업마다 브랜드 + 최신 결과 (급상승 점수순, 어제 대비 변화 포함).
+        아직 결과가 없는 작업도 brand 매핑용으로 넣음 (keywords=None)."""
         out = []
         for j in jobs():
             rs = results(j["id"], 2)
-            if not rs:
-                continue
-            out.append({"id": j["id"], "cid": j["cid"], "cat_name": j.get("cat_name"), "date": rs[0][0],
-                        "keywords": _with_change(rs[0][1], rs[1][1] if len(rs) > 1 else None)})
+            out.append({"id": j["id"], "cid": j["cid"], "cat_name": j.get("cat_name"), "brand": j.get("brand") or "",
+                        "date": rs[0][0] if rs else None,
+                        "keywords": _with_change(rs[0][1], rs[1][1] if len(rs) > 1 else None) if rs else None})
         return jsonify(jobs=out)
 
     threading.Thread(target=_scheduler, daemon=True).start()
