@@ -634,6 +634,18 @@ def keyword_lookup():
     )
     yearly = _scale_monthly(yearly_series, main["total"])
 
+    # 4) 같은 기간 일별 비율 미리 받아둠 → 그래프에서 달 클릭 시 서버 왕복 없이 바로 일별 표시
+    daily_ratio: list = []
+    if yearly_series:
+        d_start = date.fromisoformat(yearly_series[0]["period"][:7] + "-01")
+        d_resp = _datalab_trend([kw], d_start.isoformat(), prev_month_end.isoformat())
+        if "results" in d_resp:
+            by_date = {p["period"]: p["ratio"] for p in d_resp["results"][0].get("data", [])}
+            d = d_start
+            while d <= prev_month_end:
+                daily_ratio.append([d.isoformat(), by_date.get(d.isoformat(), 0)])
+                d += timedelta(days=1)
+
     return jsonify({
         "keyword":     main["keyword"],
         "pc":          main["pc"],
@@ -642,6 +654,7 @@ def keyword_lookup():
         "related":     related,
         "related_sum": related_sum,
         "yearly":      yearly,
+        "daily_ratio": daily_ratio,
     })
 
 

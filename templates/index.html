@@ -394,6 +394,7 @@ async function quickLookup() {
 
     // 연간 추이 그래프
     quickKeyword = d.keyword;
+    quickDailyRatio = d.daily_ratio || [];
     drawQuickChart(d.yearly || []);
 
     // 세부(연관) 키워드 리스트
@@ -451,6 +452,7 @@ function drawQuickChart(series) {
 }
 
 let quickKeyword = '';
+let quickDailyRatio = [];   // [[YYYY-MM-DD, ratio], ...] 조회 시 미리 받아둔 일별 비율
 let quickDailyChart = null;
 let quickDailySeq = 0;
 
@@ -471,15 +473,23 @@ async function loadQuickDaily(month, monthVol) {
   sum.textContent = '불러오는 중…';
   if (quickDailyChart) { quickDailyChart.destroy(); quickDailyChart = null; }
   try {
-    const r = await fetch('/keyword/daily', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ keyword: quickKeyword, month, month_vol: monthVol }),
-    });
-    const d = await r.json();
-    if (seq !== quickDailySeq) return;
-    if (!r.ok) { sum.innerHTML = `<span class="text-red-600">${d.error || '오류'}</span>`; return; }
-    const daily = d.daily || [];
+    let daily;
+    const pre = quickDailyRatio.filter(p => p[0].startsWith(month + '-'));
+    if (pre.length) {
+      // 미리 받아둔 비율로 즉시 계산 (그 달 월 검색량을 일별 비율대로 배분)
+      const tot = pre.reduce((a, p) => a + p[1], 0);
+      daily = pre.map(p => ({ date: p[0], vol: tot > 0 ? Math.round(p[1] * monthVol / tot) : 0 }));
+    } else {
+      const r = await fetch('/keyword/daily', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keyword: quickKeyword, month, month_vol: monthVol }),
+      });
+      const d = await r.json();
+      if (seq !== quickDailySeq) return;
+      if (!r.ok) { sum.innerHTML = `<span class="text-red-600">${d.error || '오류'}</span>`; return; }
+      daily = d.daily || [];
+    }
     if (!daily.length) { sum.textContent = '일별 데이터가 없습니다.'; return; }
     const peak = daily.reduce((a, b) => (b.vol > a.vol ? b : a));
     const avg  = Math.round(daily.reduce((a, b) => a + b.vol, 0) / daily.length);
