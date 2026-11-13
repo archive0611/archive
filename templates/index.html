@@ -477,8 +477,7 @@ async function loadQuickDaily(month, monthVol) {
     const pre = quickDailyRatio.filter(p => p[0].startsWith(month + '-'));
     if (pre.length) {
       // 미리 받아둔 비율로 즉시 계산 (그 달 월 검색량을 일별 비율대로 배분)
-      const tot = pre.reduce((a, p) => a + p[1], 0);
-      daily = pre.map(p => ({ date: p[0], vol: tot > 0 ? Math.round(p[1] * monthVol / tot) : 0 }));
+      daily = scaleRatios(pre, monthVol);
     } else {
       const r = await fetch('/keyword/daily', {
         method: 'POST',
@@ -491,58 +490,101 @@ async function loadQuickDaily(month, monthVol) {
       daily = d.daily || [];
     }
     if (!daily.length) { sum.textContent = '일별 데이터가 없습니다.'; return; }
-    const peak = daily.reduce((a, b) => (b.vol > a.vol ? b : a));
-    const avg  = Math.round(daily.reduce((a, b) => a + b.vol, 0) / daily.length);
-    sum.innerHTML = `하루 평균 <strong>${avg.toLocaleString()}</strong>회 · 최고 ` +
-      `<strong style="color:#03c75a">${peak.date.slice(5).replace('-', '/')} ${peak.vol.toLocaleString()}회</strong>`;
-    const wk = ['일','월','화','수','목','금','토'];
-    quickDailyChart = new Chart(document.getElementById('quickDailyChart'), {
-      type: 'bar',
-      data: {
-        labels: daily.map(p => Number(p.date.slice(8)) + '일'),
-        datasets: [{
-          label: '일 검색량',
-          data: daily.map(p => p.vol),
-          backgroundColor: daily.map(p => p.date === peak.date ? '#03c75a' : 'rgba(3,199,90,0.35)'),
-          borderRadius: 3,
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { display: false },
-          tooltip: { callbacks: {
-            title: items => { const p = daily[items[0].dataIndex];
-              return `${p.date} (${wk[new Date(p.date + 'T00:00:00').getDay()]})`; },
-            label: ctx => `일 검색량: ${ctx.parsed.y.toLocaleString()}회`,
-          } }
-        },
-        scales: {
-          x: { ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 16 } },
-          y: { beginAtZero: true, ticks: { callback: v => v.toLocaleString() } },
-        }
-      }
-    });
+    quickDailyChart = drawDailyBars(document.getElementById('quickDailyChart'), daily, sum);
     wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   } catch (e) {
     if (seq === quickDailySeq) sum.innerHTML = '<span class="text-red-600">네트워크 오류</span>';
   }
 }
 
+// 일별 막대그래프 공용: daily=[{date, vol}], sumEl 에 평균/최고 요약
+function drawDailyBars(canvas, daily, sumEl) {
+  const peak = daily.reduce((a, b) => (b.vol > a.vol ? b : a));
+  const avg  = Math.round(daily.reduce((a, b) => a + b.vol, 0) / daily.length);
+  sumEl.innerHTML = `하루 평균 <strong>${avg.toLocaleString()}</strong>회 · 최고 ` +
+    `<strong style="color:#03c75a">${peak.date.slice(5).replace('-', '/')} ${peak.vol.toLocaleString()}회</strong>`;
+  const wk = ['일','월','화','수','목','금','토'];
+  const multiMonth = daily[0].date.slice(0, 7) !== daily[daily.length - 1].date.slice(0, 7);
+  return new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels: daily.map(p => multiMonth ? p.date.slice(5).replace('-', '/') : Number(p.date.slice(8)) + '일'),
+      datasets: [{
+        label: '일 검색량',
+        data: daily.map(p => p.vol),
+        backgroundColor: daily.map(p => p.date === peak.date ? '#03c75a' : 'rgba(3,199,90,0.35)'),
+        borderRadius: 3,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: {
+          title: items => { const p = daily[items[0].dataIndex];
+            return `${p.date} (${wk[new Date(p.date + 'T00:00:00').getDay()]})`; },
+          label: ctx => `일 검색량: ${ctx.parsed.y.toLocaleString()}회`,
+        } }
+      },
+      scales: {
+        x: { ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 16 } },
+        y: { beginAtZero: true, ticks: { callback: v => v.toLocaleString() } },
+      }
+    }
+  });
+}
+
+function scaleRatios(ratios, vol) {
+  const tot = ratios.reduce((a, p) => a + p[1], 0);
+  return ratios.map(p => ({ date: p[0], vol: tot > 0 ? Math.round(p[1] * vol / tot) : 0 }));
+}
+
+let quickRelated = [];
+let relDailyChart = null;
+let relOpenIdx = -1;
+
 function renderQuickRelated(related, sum, fmt) {
   const wrap = document.getElementById('quickRelatedWrap');
+  quickRelated = related; relOpenIdx = -1;
+  if (relDailyChart) { relDailyChart.destroy(); relDailyChart = null; }
   if (!related.length) { wrap.style.display = 'none'; return; }
   wrap.style.display = 'block';
-  document.getElementById('quickRelatedCount').textContent = `(${related.length}개)`;
+  document.getElementById('quickRelatedCount').textContent = `(${related.length}개 · 클릭하면 최근 30일 일별)`;
   document.getElementById('quickRelatedSum').textContent = fmt(sum);
   const rows = related.map((r, i) => `
-    <div class="flex items-center justify-between px-3 py-1.5 text-sm ${i % 2 ? 'bg-slate-50' : ''} border-b border-gray-50 last:border-0">
-      <span class="text-gray-800 truncate pr-2">${r.keyword}</span>
+    <div class="rel-row flex items-center justify-between px-3 py-1.5 text-sm ${i % 2 ? 'bg-slate-50' : ''} border-b border-gray-50 cursor-pointer hover:bg-green-50"
+         onclick="toggleRelDaily(${i})">
+      <span class="text-gray-800 truncate pr-2"><span id="relArrow${i}" class="text-gray-400 text-xs mr-1">▸</span>${r.keyword}</span>
       <span class="text-gray-600 whitespace-nowrap">월 <strong>${fmt(r.total)}</strong>회
         <span class="text-gray-400 text-xs">(PC ${fmt(r.pc)} · M ${fmt(r.mobile)})</span></span>
-    </div>`).join('');
+    </div>
+    <div id="relDaily${i}" class="px-3 py-2 border-b border-gray-100 bg-white" style="display:none;"></div>`).join('');
   document.getElementById('quickRelatedList').innerHTML = rows;
+}
+
+function toggleRelDaily(i) {
+  if (relDailyChart) { relDailyChart.destroy(); relDailyChart = null; }
+  if (relOpenIdx >= 0) {
+    document.getElementById('relDaily' + relOpenIdx).style.display = 'none';
+    document.getElementById('relArrow' + relOpenIdx).textContent = '▸';
+  }
+  if (relOpenIdx === i) { relOpenIdx = -1; return; }
+  relOpenIdx = i;
+  const r = quickRelated[i];
+  const box = document.getElementById('relDaily' + i);
+  document.getElementById('relArrow' + i).textContent = '▾';
+  box.style.display = 'block';
+  if (!r.daily_ratio || !r.daily_ratio.length) {
+    box.innerHTML = '<div class="text-xs text-gray-400">일별 데이터가 없습니다 (데이터랩 미집계 키워드).</div>';
+    return;
+  }
+  const daily = scaleRatios(r.daily_ratio, r.total);
+  box.innerHTML = `
+    <div class="text-xs text-gray-500 mb-1"><strong class="text-gray-700">${r.keyword}</strong> 최근 30일 · <span id="relDailySum"></span></div>
+    <div style="position:relative; height:170px;"><canvas id="relDailyCanvas"></canvas></div>`;
+  relDailyChart = drawDailyBars(document.getElementById('relDailyCanvas'), daily, document.getElementById('relDailySum'));
+  box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 // ── 카테고리 로딩 ──────────────────────────────────────────────

@@ -624,6 +624,17 @@ def keyword_lookup():
     related.sort(key=lambda r: r["total"], reverse=True)
     related_sum = sum(r["total"] for r in related)
 
+    # 세부 키워드별 최근 30일 일별 비율 미리 받아둠 (월 검색량 = 최근 30일 기준이라 그대로 배분)
+    r_end = date.today() - timedelta(days=1)
+    r_start = r_end - timedelta(days=29)
+    r_dates = [(r_start + timedelta(days=i)).isoformat() for i in range(30)]
+    for batch in _chunked(related, 5):
+        resp = _datalab_trend([r["keyword"] for r in batch], r_start.isoformat(), r_end.isoformat())
+        res_map = {g.get("title"): g.get("data", []) for g in resp.get("results", [])}
+        for r in batch:
+            by_date = {p["period"]: p["ratio"] for p in res_map.get(r["keyword"], [])}
+            r["daily_ratio"] = [[d, by_date.get(d, 0)] for d in r_dates] if by_date else []
+
     # 3) 연간 추이 (최근 3년 월간) — 본 키워드 기준, 최근 실제 검색량으로 스케일
     end_dt = date.today() - timedelta(days=1)
     prev_month_end = end_dt.replace(day=1) - timedelta(days=1)
