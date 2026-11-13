@@ -30,7 +30,7 @@
     <tr class="text-left text-xs text-gray-500"><th class="py-1 px-2">#</th><th class="px-2">어제 대비</th><th class="px-2">키워드</th><th class="px-2 text-right">급상승 점수</th>
       <th class="px-2 text-center">검색량 순위</th><th class="px-2 text-center">쇼핑 순위</th><th class="px-2 text-right">성장률</th><th class="px-2 text-right">월간 검색량</th></tr>
     {% for k in r.keywords[:40] %}
-    <tr class="border-t border-gray-100 kw-row">
+    <tr class="border-t border-gray-100 kw-row{{ loop.cycle('', ' zebra') }}">
       <td class="py-1 px-2 text-gray-400">{{ k.rise_rank }}</td>
       <td class="px-2 text-xs">{% if k.rank_change is none %}<span class="text-red-600 font-bold">NEW</span>{% elif k.rank_change > 0 %}<span class="text-red-600">▲{{ k.rank_change }}</span>{% elif k.rank_change < 0 %}<span class="text-blue-600">▼{{ -k.rank_change }}</span>{% else %}<span class="text-gray-400">–</span>{% endif %}</td>
       <td class="px-2 font-semibold whitespace-nowrap"><span class="kw-text">{{ k.keyword }}</span>
@@ -49,6 +49,8 @@
 <style>
 .bl-btn{margin-left:6px;padding:0 6px;border:1px solid #e5e7eb;border-radius:4px;font-size:11px;font-weight:400;color:#9ca3af;background:#fff;cursor:pointer;line-height:18px}
 .bl-btn:hover{color:#dc2626;border-color:#fca5a5;background:#fef2f2}
+tr.kw-row.zebra{background:#f6f8fa}
+tr.kw-row:hover{background:#eef6f0}
 tr.blacked td{opacity:.35}
 tr.blacked .kw-text{text-decoration:line-through}
 tr.blacked td:has(.bl-btn){opacity:1}
