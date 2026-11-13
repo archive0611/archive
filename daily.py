@@ -1,4 +1,6 @@
-"""매일 수집 + 블랙리스트 (2026-11-14 추가).
+"""블랙리스트 (2026-11-14 추가). ※ 매일 수집은 같은 날 사용자 요청으로 제거 — 화면·라우트·스케줄러 등록을 뺐고,
+  아래 jobs/run_job/_scheduler 함수와 $DATA_DIR/daily 의 기존 파일은 그대로 둠(다시 켜려면 git 이력 참고).
+
 
 - 매일 수집: 화면에서 분석한 조건(카테고리·기간·수집 수·최소 검색량·제외 키워드)을 저장해 두면
   매일 DAILY_HOUR_KST 시 이후 한 번 같은 분석을 돌려 날짜별로 쌓는다. (gunicorn worker 1개 → 프로세스 안 스레드로 충분)
@@ -165,50 +167,6 @@ def init(app, run_analysis):
     global _run_analysis
     _run_analysis = run_analysis
 
-    @app.post("/daily/save")
-    def daily_save():
-        j = save_job(request.get_json(force=True), session.get("user") or "")
-        if not results(j["id"], 1):
-            threading.Thread(target=run_job, args=(j["id"],), daemon=True).start()   # 첫 결과는 바로
-        return jsonify(ok=True, job=j)
-
-    @app.post("/daily/<jid>/edit")
-    def daily_edit(jid):
-        """매일 수집 화면에서 조건(기간·수집 개수·분석 개수·최소 월간 검색량·제외 키워드) 바꾸기 → 바로 다시 수집."""
-        b = request.get_json(force=True)
-        with _lock:
-            js = jobs()
-            j = next((x for x in js if x["id"] == jid), None)
-            if not j:
-                return jsonify(ok=False, error="작업이 없어요"), 404
-            before = {k: j.get(k) for k in PARAM_KEYS}
-            try:
-                j["days"] = max(31, min(int(b.get("days", j.get("days") or 90)), 365))
-                j["max_pages"] = max(1, min(int(b.get("max_pages", j.get("max_pages") or 5)), 25))
-                j["top_n"] = max(10, min(int(b.get("top_n", j.get("top_n") or 100)), 500))
-                j["min_monthly"] = max(0, int(b.get("min_monthly", j.get("min_monthly") or 0)))
-            except (TypeError, ValueError):
-                return jsonify(ok=False, error="숫자로 넣어 주세요"), 400
-            if "brand" in b:
-                j["brand"] = b.get("brand") if b.get("brand") in BRANDS else ""
-            if "exclude_keywords" in b:
-                j["exclude_keywords"] = str(b.get("exclude_keywords") or "").strip()
-            _write(JOBS, js)
-            changed = before != {k: j.get(k) for k in PARAM_KEYS}
-        if changed:          # 브랜드만 바꾼 거면 다시 분석 안 함
-            threading.Thread(target=run_job, args=(jid,), daemon=True).start()
-        return jsonify(ok=True, job=j, rerun=changed)
-
-    @app.post("/daily/<jid>/delete")
-    def daily_delete(jid):
-        delete_job(jid)
-        return jsonify(ok=True)
-
-    @app.post("/daily/<jid>/run")
-    def daily_run(jid):
-        threading.Thread(target=run_job, args=(jid,), daemon=True).start()
-        return jsonify(ok=True)
-
     @app.post("/blacklist")
     def blacklist_set():
         d = request.get_json(force=True)
@@ -220,30 +178,3 @@ def init(app, run_analysis):
     @app.get("/blacklist/<cid>")
     def blacklist_get(cid):
         return jsonify(blacklist=get_blacklist(cid))
-
-    @app.get("/daily")
-    def daily_page():
-        rows = []
-        for j in jobs():
-            rs = results(j["id"], 2)
-            today = rs[0] if rs else None
-            prev = rs[1][1] if len(rs) > 1 else None
-            rows.append({"job": j, "date": today[0] if today else None,
-                         "collected_at": today[1].get("collected_at") if today else None,
-                         "keywords": _with_change(today[1], prev) if today else [],
-                         "blacklist": get_blacklist(j["cid"]), "running": j["id"] in _running})
-        return render_template("daily.html", rows=rows, hour=DAILY_HOUR_KST, brands=BRANDS)
-
-    @app.get("/api/daily/latest")
-    def daily_latest():
-        """광고 위키용: 매일 수집 작업마다 브랜드 + 최신 결과 (급상승 점수순, 어제 대비 변화 포함).
-        아직 결과가 없는 작업도 brand 매핑용으로 넣음 (keywords=None)."""
-        out = []
-        for j in jobs():
-            rs = results(j["id"], 2)
-            out.append({"id": j["id"], "cid": j["cid"], "cat_name": j.get("cat_name"), "brand": j.get("brand") or "",
-                        "date": rs[0][0] if rs else None,
-                        "keywords": _with_change(rs[0][1], rs[1][1] if len(rs) > 1 else None) if rs else None})
-        return jsonify(jobs=out)
-
-    threading.Thread(target=_scheduler, daemon=True).start()

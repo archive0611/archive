@@ -115,7 +115,6 @@
     <div class="flex justify-end gap-3 text-xs text-gray-500 mb-1">
       <span>{{ auth_user }}</span>
       {% if auth_is_admin %}<a href="/admin/users" class="hover:underline">계정 관리</a>{% endif %}
-      <a href="/daily" class="hover:underline font-semibold" style="color:#03c75a">매일 수집</a>
       <a href="/password" class="hover:underline">비밀번호 변경</a>
       <a href="/logout" class="hover:underline">로그아웃</a>
     </div>
@@ -314,7 +313,6 @@
       </div>
       <div class="flex flex-wrap items-center gap-2">
         <span id="dateRange" class="text-xs text-gray-400"></span>
-        <button class="btn-outline text-sm" id="dailyBtn" onclick="saveDaily()" title="이 카테고리를 같은 조건으로 매일 자동 분석">매일 수집</button>
         <button class="btn-outline text-sm" onclick="downloadCSV()">CSV 다운로드</button>
       </div>
     </div>
@@ -743,15 +741,7 @@ async function runAnalysis() {
 
 let lastPayload = null;
 
-// ── 매일 수집 · 블랙리스트 (daily.py) ─────────────────────────────
-async function saveDaily() {
-  if (!lastPayload) return;
-  const b = document.getElementById('dailyBtn');
-  const r = await fetch('/daily/save', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(lastPayload)});
-  if (r.ok) { b.textContent = '✓ 매일 수집 중'; b.title = '매일 수집 화면에서 결과를 볼 수 있어요'; }
-  else alert('저장 실패');
-}
-
+// ── 블랙리스트 (daily.py) ─────────────────────────────
 function renderBlack(list) {
   const el = document.getElementById('blackList');
   el.innerHTML = list.length ? '블랙리스트: ' + list.map(k =>

@@ -733,7 +733,7 @@ def analyze():
 
 
 def _run_analysis(body: dict) -> dict:
-    """분석 1회 (화면 '분석 시작'·매일 수집 공용). 실패는 AnalysisError."""
+    """분석 1회 (화면 '분석 시작'). 실패는 AnalysisError."""
     cid       = str(body.get("cid", "")).strip()
     cat_name  = body.get("cat_name", cid)
     days      = int(body.get("days", 90))
@@ -949,7 +949,7 @@ def download():
     )
 
 
-import daily  # noqa: E402  (매일 수집·블랙리스트 — daily.py)
+import daily  # noqa: E402  (블랙리스트 — daily.py, 매일 수집은 11-14 제거)
 daily.init(app, _run_analysis)
 
 
