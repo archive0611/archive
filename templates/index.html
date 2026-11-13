@@ -309,7 +309,6 @@
       <div>
         <h2 class="text-base font-bold text-gray-700">전체 결과 <span id="resultCount" class="text-gray-400 font-normal text-sm"></span></h2>
         <p id="catNameDisplay" class="text-xs text-gray-400 mt-0.5"></p>
-        <p id="blackList" class="text-xs text-gray-500 mt-0.5"></p>
       </div>
       <div class="flex flex-wrap items-center gap-2">
         <span id="dateRange" class="text-xs text-gray-400"></span>
@@ -336,8 +335,7 @@
             <th class="py-2 px-3 text-right th-sort" onclick="sortTable('growth')">성장률<span class="sort-icon" id="si-growth"></span></th>
             <th class="py-2 px-3 text-right th-sort" onclick="sortTable('peak_date')">정점<span class="sort-icon" id="si-peak_date"></span></th>
             <th class="py-2 px-3 text-right th-sort" onclick="sortTable('rise_score')" title="검색량 순위 10위 안 20 + 쇼핑 순위 10위 안 20 + 성장률 1.0↑20/1.5↑40/2.0↑60">급상승 점수<span class="sort-icon" id="si-rise_score"></span></th>
-            <th class="py-2 px-3 th-sort" onclick="sortTable('score')">점수<span class="sort-icon" id="si-score"></span></th>
-            <th class="py-2 px-1 rounded-tr-lg"></th>
+            <th class="py-2 px-3 th-sort rounded-tr-lg" onclick="sortTable('score')">점수<span class="sort-icon" id="si-score"></span></th>
           </tr>
         </thead>
         <tbody id="tableBody"></tbody>
@@ -717,8 +715,6 @@ async function runAnalysis() {
     if (!res.ok) throw new Error(data.error || '알 수 없는 오류');
 
     lastData = data;
-    lastPayload = payload;
-    renderBlack(data.blacklist || []);
     _sortCol = 'vol_rank';
     _sortDir = 'asc';
     const sorted = [...data.keywords].sort((a, b) => (a.vol_rank ?? 9999) - (b.vol_rank ?? 9999));
@@ -738,33 +734,6 @@ async function runAnalysis() {
     btn.innerHTML = '분석 시작';
   }
 }
-
-let lastPayload = null;
-
-// ── 블랙리스트 (daily.py) ─────────────────────────────
-function renderBlack(list) {
-  const el = document.getElementById('blackList');
-  el.innerHTML = list.length ? '블랙리스트: ' + list.map(k =>
-    `<span class="inline-block bg-gray-100 rounded px-2 mr-1">${k} <a href="#" class="text-gray-400" onclick="delBlack(${JSON.stringify(k).replace(/"/g,'&quot;')});return false">되돌리기</a></span>`).join('') : '';
-}
-
-async function setBlack(keyword, on) {
-  if (!lastData) return;
-  const r = await fetch('/blacklist', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({cid: lastData.cid, keyword, on})});
-  const d = await r.json();
-  renderBlack(d.blacklist || []);
-  return d;
-}
-
-async function addBlack(keyword) {
-  await setBlack(keyword, true);
-  lastData.keywords = lastData.keywords.filter(k => k.keyword !== keyword);
-  renderTable(lastData.keywords);
-  document.getElementById('resultCount').textContent = `(${lastData.keywords.length}개)`;
-}
-
-async function delBlack(keyword) { await setBlack(keyword, false); }
 
 let _sortCol = 'score';
 let _sortDir = 'desc';
@@ -840,8 +809,6 @@ function renderTable(keywords) {
           <div class="score-bar flex-1"><div class="score-bar-fill" style="width:${pct}%"></div></div>
         </div>
       </td>
-      <td class="py-2 px-1"><a href="#" title="블랙리스트에 넣기" class="text-gray-300 hover:text-red-600"
-        onclick="event.stopPropagation();addBlack(${JSON.stringify(k.keyword).replace(/"/g,'&quot;')});return false">✕</a></td>
     </tr>`;
   }).join('');
   document.getElementById('tableBody').innerHTML = rows;

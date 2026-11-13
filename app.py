@@ -760,8 +760,6 @@ def _run_analysis(body: dict) -> dict:
 
     # 제외 키워드 필터링
     si_kws = [k for k in si_kws if not _is_excluded(k["keyword"], extra_exclude)]
-    black = set(daily.get_blacklist(cid))
-    si_kws = [k for k in si_kws if k["keyword"] not in black]
 
     prev_si_rank_map: dict = {}
 
@@ -844,7 +842,6 @@ def _run_analysis(body: dict) -> dict:
         "cid":       cid,
         "cat_name":  cat_name,
         "si_total":  len(si_kws),
-        "blacklist": sorted(black),
     }
 
 
@@ -949,8 +946,6 @@ def download():
     )
 
 
-import daily  # noqa: E402  (블랙리스트 — daily.py, 매일 수집은 11-14 제거)
-daily.init(app, _run_analysis)
 
 
 if __name__ == "__main__":
