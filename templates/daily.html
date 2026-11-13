@@ -19,10 +19,22 @@
         {% if j.last_error %}<span class="text-red-600">· 오류: {{ j.last_error }}</span>{% endif %}</div>
     </div>
     <div class="flex gap-2">
+      <button class="btn-sm" onclick="document.getElementById('edit-{{ j.id }}').classList.toggle('hidden')">조건 바꾸기</button>
       <button class="btn-sm" onclick="act('/daily/{{ j.id }}/run')">지금 다시 수집</button>
       <button class="btn-sm" onclick="if(confirm('매일 수집을 그만할까요? (쌓인 결과 파일은 남아요)')) act('/daily/{{ j.id }}/delete')">매일 수집 끄기</button>
     </div>
   </div>
+  <form id="edit-{{ j.id }}" class="hidden mb-3 p-3 rounded bg-gray-50 text-sm flex flex-wrap items-end gap-3" onsubmit="saveEdit(event, '{{ j.id }}')">
+    <label>분석 기간<br><select name="days" class="border rounded px-2 py-1">
+      {% for v, l in [(30,'30일'),(60,'60일'),(90,'90일'),(180,'180일'),(365,'1년')] %}<option value="{{ v }}" {{ 'selected' if (j.days or 90)|int == v }}>{{ l }}</option>{% endfor %}</select></label>
+    <label>인기검색어 수집<br><select name="max_pages" class="border rounded px-2 py-1">
+      {% for v in [3,5,7,10] %}<option value="{{ v }}" {{ 'selected' if (j.max_pages or 5)|int == v }}>{{ v * 20 }}개</option>{% endfor %}</select></label>
+    <label>데이터랩 분석<br><select name="top_n" class="border rounded px-2 py-1">
+      {% for v in [50,100,140,200] %}<option value="{{ v }}" {{ 'selected' if (j.top_n or 100)|int == v }}>상위 {{ v }}개</option>{% endfor %}</select></label>
+    <label>최소 월간 검색량<br><input name="min_monthly" type="number" min="0" step="500" value="{{ j.min_monthly or 0 }}" class="border rounded px-2 py-1 w-28"></label>
+    <label class="flex-1 min-w-[200px]">제외 키워드 (쉼표로)<br><input name="exclude_keywords" value="{{ j.exclude_keywords or '' }}" class="border rounded px-2 py-1 w-full"></label>
+    <button class="btn-sm" style="background:#03c75a;color:#fff">저장하고 다시 수집</button>
+  </form>
   {% if r.blacklist %}<div class="text-xs mb-2">블랙리스트:
     {% for b in r.blacklist %}<span class="inline-block bg-gray-100 rounded px-2 py-0.5 mr-1">{{ b }} <a href="#" onclick="black('{{ j.cid }}', {{ b|tojson|forceescape }}, false);return false" class="text-gray-400">되돌리기</a></span>{% endfor %}</div>{% endif %}
   {% if r.keywords %}
@@ -57,6 +69,16 @@ tr.blacked td:has(.bl-btn){opacity:1}
 tr.blacked .bl-btn{color:#2563eb;border-color:#bfdbfe;background:#eff6ff}
 </style>
 <script>
+// 조건 바꾸기 → 저장 즉시 다시 수집 (1~3분)
+async function saveEdit(ev, jid){
+  ev.preventDefault();
+  const f = ev.target, body = Object.fromEntries(new FormData(f));
+  const b = f.querySelector('button'); b.disabled = true; b.textContent = '저장 중…';
+  const r = await fetch('/daily/' + jid + '/edit', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || !d.ok) { alert('저장 실패: ' + (d.error || r.status)); b.disabled = false; b.textContent = '저장하고 다시 수집'; return; }
+  location.reload();
+}
 // ✕ = 블랙리스트 넣기 → 그 줄 회색+취소선, 버튼이 '되돌리기'로 바뀜 (새로고침 없이). 다시 누르면 해제.
 async function toggleBlack(btn){
   const row = btn.closest('tr'), on = !row.classList.contains('blacked');

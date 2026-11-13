@@ -169,6 +169,28 @@ def init(app, run_analysis):
             threading.Thread(target=run_job, args=(j["id"],), daemon=True).start()   # 첫 결과는 바로
         return jsonify(ok=True, job=j)
 
+    @app.post("/daily/<jid>/edit")
+    def daily_edit(jid):
+        """매일 수집 화면에서 조건(기간·수집 개수·분석 개수·최소 월간 검색량·제외 키워드) 바꾸기 → 바로 다시 수집."""
+        b = request.get_json(force=True)
+        with _lock:
+            js = jobs()
+            j = next((x for x in js if x["id"] == jid), None)
+            if not j:
+                return jsonify(ok=False, error="작업이 없어요"), 404
+            try:
+                j["days"] = max(31, min(int(b.get("days", j.get("days") or 90)), 365))
+                j["max_pages"] = max(1, min(int(b.get("max_pages", j.get("max_pages") or 5)), 25))
+                j["top_n"] = max(10, min(int(b.get("top_n", j.get("top_n") or 100)), 500))
+                j["min_monthly"] = max(0, int(b.get("min_monthly", j.get("min_monthly") or 0)))
+            except (TypeError, ValueError):
+                return jsonify(ok=False, error="숫자로 넣어 주세요"), 400
+            if "exclude_keywords" in b:
+                j["exclude_keywords"] = str(b.get("exclude_keywords") or "").strip()
+            _write(JOBS, js)
+        threading.Thread(target=run_job, args=(jid,), daemon=True).start()
+        return jsonify(ok=True, job=j)
+
     @app.post("/daily/<jid>/delete")
     def daily_delete(jid):
         delete_job(jid)
