@@ -3,7 +3,7 @@
 """
 import csv, json, math, time, io, hashlib, hmac, base64, threading, os
 import urllib.parse, urllib.request, urllib.error
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from flask import Flask, jsonify, render_template, request, Response
 
@@ -642,6 +642,42 @@ def keyword_lookup():
         "related":     related,
         "related_sum": related_sum,
         "yearly":      yearly,
+    })
+
+
+@app.route("/keyword/daily", methods=["POST"])
+def keyword_daily():
+    """빠른 조회: 월별 그래프에서 클릭한 달의 일별 검색량 (그 달 추정 월 검색량을 일별 ratio로 배분)"""
+    body  = request.get_json(force=True)
+    kw    = (body.get("keyword") or "").strip()
+    month = (body.get("month") or "").strip()          # YYYY-MM
+    month_vol = int(body.get("month_vol") or 0)
+    try:
+        start_dt = datetime.strptime(month + "-01", "%Y-%m-%d").date()
+    except ValueError:
+        return jsonify({"error": "month 형식은 YYYY-MM"}), 400
+    if not kw:
+        return jsonify({"error": "키워드를 입력해 주세요."}), 400
+
+    next_month = (start_dt.replace(day=28) + timedelta(days=4)).replace(day=1)
+    end_dt = min(next_month - timedelta(days=1), date.today() - timedelta(days=1))
+    resp = _datalab_trend([kw], start_dt.isoformat(), end_dt.isoformat())
+    if "results" not in resp:
+        return jsonify({"error": f"데이터랩 오류: {resp.get('msg') or resp.get('error')}"}), 502
+    series = resp["results"][0].get("data", [])
+
+    # 데이터랩은 검색량 0인 날을 생략 → 달 전체 날짜로 채움
+    by_date = {p["period"]: p["ratio"] for p in series}
+    full, d = [], start_dt
+    while d <= end_dt:
+        full.append({"period": d.isoformat(), "ratio": by_date.get(d.isoformat(), 0)})
+        d += timedelta(days=1)
+
+    return jsonify({
+        "keyword":   kw,
+        "month":     month,
+        "month_vol": month_vol,
+        "daily":     _scale_daily(full, month_vol),
     })
 
 
