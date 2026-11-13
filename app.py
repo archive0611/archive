@@ -705,9 +705,35 @@ def keyword_daily():
     })
 
 
+class AnalysisError(Exception):
+    def __init__(self, msg, code=400):
+        super().__init__(msg)
+        self.code = code
+
+
+# ── 급상승 점수 (광고 위키 역추천과 같은 규칙, 2026-11-14) ───────────────
+RISE_RANK_TOP   = 10                               # 검색량 순위·쇼핑 인기 순위 이 안이면 각 20점
+RISE_RANK_PTS   = 20
+RISE_GROWTH     = [(2.0, 60), (1.5, 40), (1.0, 20)]  # 성장률 (이상, 점수)
+
+
+def _rise_score(r: dict) -> int:
+    s = RISE_RANK_PTS if 0 < (r.get("vol_rank") or 999) <= RISE_RANK_TOP else 0
+    s += RISE_RANK_PTS if 0 < (r.get("si_rank") or 999) <= RISE_RANK_TOP else 0
+    s += next((pt for th, pt in RISE_GROWTH if (r.get("growth") or 0) >= th), 0)
+    return s
+
+
 @app.route("/analyze", methods=["POST"])
 def analyze():
-    body      = request.get_json(force=True)
+    try:
+        return jsonify(_run_analysis(request.get_json(force=True)))
+    except AnalysisError as e:
+        return jsonify({"error": str(e)}), e.code
+
+
+def _run_analysis(body: dict) -> dict:
+    """분석 1회 (화면 '분석 시작'·매일 수집 공용). 실패는 AnalysisError."""
     cid       = str(body.get("cid", "")).strip()
     cat_name  = body.get("cat_name", cid)
     days      = int(body.get("days", 90))
@@ -717,7 +743,7 @@ def analyze():
     extra_exclude = {k.strip() for k in body.get("exclude_keywords", "").split(",") if k.strip()}
 
     if not cid:
-        return jsonify({"error": "카테고리를 선택해 주세요."}), 400
+        raise AnalysisError("카테고리를 선택해 주세요.")
 
     end_dt   = date.today() - timedelta(days=1)
     start_dt = end_dt - timedelta(days=days - 1)
@@ -727,13 +753,15 @@ def analyze():
     try:
         si_kws = _si_keywords(cid, start_str, end_str, max_pages)
     except Exception as e:
-        return jsonify({"error": f"쇼핑인사이트 API 오류: {e}"}), 500
+        raise AnalysisError(f"쇼핑인사이트 API 오류: {e}", 500)
 
     if not si_kws:
-        return jsonify({"error": "키워드를 수집하지 못했습니다. CID를 확인해 주세요."}), 400
+        raise AnalysisError("키워드를 수집하지 못했습니다. CID를 확인해 주세요.")
 
     # 제외 키워드 필터링
     si_kws = [k for k in si_kws if not _is_excluded(k["keyword"], extra_exclude)]
+    black = set(daily.get_blacklist(cid))
+    si_kws = [k for k in si_kws if k["keyword"] not in black]
 
     prev_si_rank_map: dict = {}
 
@@ -747,14 +775,14 @@ def analyze():
         candidates = pool
 
     if not candidates:
-        return jsonify({"error": f"월간 검색량 {min_monthly:,}회 이상인 키워드가 없습니다. 임계값을 낮춰보세요."}), 400
+        raise AnalysisError(f"월간 검색량 {min_monthly:,}회 이상인 키워드가 없습니다. 임계값을 낮춰보세요.")
 
     # 3) 데이터랩 트렌드 (5개씩 batch)
     metrics: dict = {}
     for batch in _chunked([c["keyword"] for c in candidates], 5):
         resp = _datalab_trend(batch, start_str, end_str)
         if "error" in resp:
-            return jsonify({"error": f"데이터랩 API 오류: {resp.get('msg', '')[:200]}"}), 500
+            raise AnalysisError(f"데이터랩 API 오류: {resp.get('msg', '')[:200]}", 500)
         for kw, item in zip(batch, resp["results"]):
             m = _analyze(item["data"], days)
             if m:
@@ -806,14 +834,18 @@ def analyze():
     # 월간 검색량 순위 + 변화
     for i, r in enumerate(sorted(result, key=lambda x: x["monthly_vol"], reverse=True), 1):
         r["vol_rank"] = i
+    for r in result:
+        r["rise_score"] = _rise_score(r)
 
-    return jsonify({
+    return {
         "keywords":  result,
         "start":     start_str,
         "end":       end_str,
+        "cid":       cid,
         "cat_name":  cat_name,
         "si_total":  len(si_kws),
-    })
+        "blacklist": sorted(black),
+    }
 
 
 def _dl_monthly_call(keyword: str, start: str, end: str) -> list[dict]:
@@ -915,6 +947,10 @@ def download():
         mimetype="text/csv",
         headers={"Content-Disposition": "attachment; filename=rising_keywords.csv"},
     )
+
+
+import daily  # noqa: E402  (매일 수집·블랙리스트 — daily.py)
+daily.init(app, _run_analysis)
 
 
 if __name__ == "__main__":
