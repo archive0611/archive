@@ -388,10 +388,17 @@ async function quickLookup() {
     const fmt = n => (n || 0).toLocaleString('ko-KR');
 
     // 요약
+    // 세부 키워드가 있으면 그 합계를 대표 월 검색량으로 (키워드 단독 검색량은 작게 같이 표시)
+    const rel = d.related || [];
+    const useSum = rel.length > 0 && (d.related_sum || 0) > 0;
+    const tot = useSum ? d.related_sum : d.total;
+    const pc  = useSum ? rel.reduce((a, r) => a + (r.pc || 0), 0) : d.pc;
+    const mo  = useSum ? rel.reduce((a, r) => a + (r.mobile || 0), 0) : d.mobile;
     summary.innerHTML =
       `<strong class="text-gray-900">${d.keyword}</strong>` +
-      ` → 월 <strong style="color:#03c75a">${fmt(d.total)}</strong>회` +
-      ` <span class="text-gray-500">(PC ${fmt(d.pc)} · 모바일 ${fmt(d.mobile)})</span>`;
+      ` → 월 <strong style="color:#03c75a">${fmt(tot)}</strong>회` +
+      ` <span class="text-gray-500">(PC ${fmt(pc)} · 모바일 ${fmt(mo)})</span>` +
+      (useSum ? ` <span class="text-gray-400 text-xs">· 세부 키워드 ${rel.length}개 합계 / '${d.keyword}' 단독 ${fmt(d.total)}회</span>` : '');
 
     // 연간 추이 그래프
     quickKeyword = d.keyword;
