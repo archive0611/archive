@@ -396,6 +396,7 @@ async function quickLookup() {
     // 연간 추이 그래프
     quickKeyword = d.keyword;
     quickDailyRatio = d.daily_ratio || [];
+    quickPartial = d.partial_month || null;
     drawQuickChart(d.yearly || []);
 
     // 세부(연관) 키워드 리스트
@@ -411,7 +412,7 @@ function drawQuickChart(series) {
   const wrap = document.getElementById('quickYearlyWrap');
   if (!series.length) { wrap.style.display = 'none'; return; }
   wrap.style.display = 'block';
-  const labels = series.map(p => p.date);
+  const labels = series.map(p => quickPartial && p.date === quickPartial.month ? p.date + '*' : p.date);
   const values = series.map(p => p.vol);
   if (quickChart) quickChart.destroy();
   quickChart = new Chart(document.getElementById('quickChart'), {
@@ -440,7 +441,9 @@ function drawQuickChart(series) {
       plugins: {
         legend: { display: false },
         tooltip: { callbacks: {
-          label: ctx => `월 검색량: ${ctx.parsed.y.toLocaleString()}회`,
+          label: ctx => (quickPartial && series[ctx.dataIndex].date === quickPartial.month)
+            ? `${partialLabel()} 검색량: ${ctx.parsed.y.toLocaleString()}회 (진행 중)`
+            : `월 검색량: ${ctx.parsed.y.toLocaleString()}회`,
           footer: () => '클릭 → 일별 보기',
         } }
       },
@@ -453,6 +456,11 @@ function drawQuickChart(series) {
 }
 
 let quickKeyword = '';
+let quickPartial = null;    // {month:'YYYY-MM', until:'YYYY-MM-DD'} 진행 중인 이번 달(어제까지)
+function partialLabel() {
+  const [, m, d] = quickPartial.until.split('-');
+  return `${Number(m)}/${Number(d)}까지`;
+}
 let quickDailyRatio = [];   // [[YYYY-MM-DD, ratio], ...] 조회 시 미리 받아둔 일별 비율
 let quickDailyChart = null;
 let quickDailySeq = 0;
@@ -470,7 +478,10 @@ async function loadQuickDaily(month, monthVol) {
   const sum   = document.getElementById('quickDailySummary');
   const [y, m] = month.split('-');
   wrap.style.display = 'block';
-  title.textContent = `(${y}년 ${Number(m)}월 · 월 ${monthVol.toLocaleString()}회)`;
+  const isPartial = quickPartial && quickPartial.month === month;
+  title.textContent = isPartial
+    ? `(${y}년 ${Number(m)}월 · ${partialLabel()} ${monthVol.toLocaleString()}회)`
+    : `(${y}년 ${Number(m)}월 · 월 ${monthVol.toLocaleString()}회)`;
   sum.textContent = '불러오는 중…';
   if (quickDailyChart) { quickDailyChart.destroy(); quickDailyChart = null; }
   try {

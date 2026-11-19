@@ -3,7 +3,14 @@
 """
 import csv, json, math, time, io, hashlib, hmac, base64, threading, os
 import urllib.parse, urllib.request, urllib.error
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+
+KST = timezone(timedelta(hours=9))
+
+
+def _today() -> date:
+    """한국 날짜 기준 오늘 (Railway 서버는 UTC라 date.today()가 하루 늦을 수 있음)"""
+    return datetime.now(KST).date()
 from pathlib import Path
 from flask import Flask, jsonify, render_template, request, Response
 
@@ -625,7 +632,7 @@ def keyword_lookup():
     related_sum = sum(r["total"] for r in related)
 
     # 세부 키워드별 최근 30일 일별 비율 미리 받아둠 (월 검색량 = 최근 30일 기준이라 그대로 배분)
-    r_end = date.today() - timedelta(days=1)
+    r_end = _today() - timedelta(days=1)
     r_start = r_end - timedelta(days=29)
     r_dates = [(r_start + timedelta(days=i)).isoformat() for i in range(30)]
     for batch in _chunked(related, 5):
@@ -635,27 +642,37 @@ def keyword_lookup():
             by_date = {p["period"]: p["ratio"] for p in res_map.get(r["keyword"], [])}
             r["daily_ratio"] = [[d, by_date.get(d, 0)] for d in r_dates] if by_date else []
 
-    # 3) 연간 추이 (최근 3년 월간) — 본 키워드 기준, 최근 실제 검색량으로 스케일
-    end_dt = date.today() - timedelta(days=1)
+    # 3) 연간 추이 (최근 3년 월간, 어제까지 = 진행 중인 이번 달 포함) — 본 키워드 기준
+    #    배율은 마지막 '다 끝난 달' 기준(진행 중인 달은 며칠치뿐이라 기준으로 쓰면 왜곡)
+    end_dt = _today() - timedelta(days=1)
     prev_month_end = end_dt.replace(day=1) - timedelta(days=1)
     yearly_series = _dl_monthly_call(
         kw,
         (prev_month_end - timedelta(days=365 * 3)).isoformat(),
-        prev_month_end.isoformat(),
+        end_dt.isoformat(),
     )
-    yearly = _scale_monthly(yearly_series, main["total"])
+    partial_month = None
+    if yearly_series and yearly_series[-1]["period"][:7] == end_dt.isoformat()[:7]             and (end_dt + timedelta(days=1)).day != 1:
+        partial_month = {"month": end_dt.isoformat()[:7], "until": end_dt.isoformat()}
+    yearly = _scale_monthly(yearly_series, main["total"], anchor=-2 if partial_month else -1)
 
     # 4) 같은 기간 일별 비율 미리 받아둠 → 그래프에서 달 클릭 시 서버 왕복 없이 바로 일별 표시
     daily_ratio: list = []
     if yearly_series:
         d_start = date.fromisoformat(yearly_series[0]["period"][:7] + "-01")
-        d_resp = _datalab_trend([kw], d_start.isoformat(), prev_month_end.isoformat())
+        d_resp = _datalab_trend([kw], d_start.isoformat(), end_dt.isoformat())
         if "results" in d_resp:
             by_date = {p["period"]: p["ratio"] for p in d_resp["results"][0].get("data", [])}
             d = d_start
-            while d <= prev_month_end:
+            while d <= end_dt:
                 daily_ratio.append([d.isoformat(), by_date.get(d.isoformat(), 0)])
                 d += timedelta(days=1)
+            # 데이터랩이 아직 어제 데이터를 안 올렸으면 끝의 빈 날은 0으로 그리지 말고 잘라냄
+            last_day = max(by_date) if by_date else None
+            if last_day:
+                daily_ratio = [p for p in daily_ratio if p[0] <= last_day]
+                if partial_month and last_day[:7] == partial_month["month"]:
+                    partial_month["until"] = last_day
 
     return jsonify({
         "keyword":     main["keyword"],
@@ -666,6 +683,7 @@ def keyword_lookup():
         "related_sum": related_sum,
         "yearly":      yearly,
         "daily_ratio": daily_ratio,
+        "partial_month": partial_month,
     })
 
 
@@ -684,7 +702,7 @@ def keyword_daily():
         return jsonify({"error": "키워드를 입력해 주세요."}), 400
 
     next_month = (start_dt.replace(day=28) + timedelta(days=4)).replace(day=1)
-    end_dt = min(next_month - timedelta(days=1), date.today() - timedelta(days=1))
+    end_dt = min(next_month - timedelta(days=1), _today() - timedelta(days=1))
     resp = _datalab_trend([kw], start_dt.isoformat(), end_dt.isoformat())
     if "results" not in resp:
         return jsonify({"error": f"데이터랩 오류: {resp.get('msg') or resp.get('error')}"}), 502
@@ -745,7 +763,7 @@ def _run_analysis(body: dict) -> dict:
     if not cid:
         raise AnalysisError("카테고리를 선택해 주세요.")
 
-    end_dt   = date.today() - timedelta(days=1)
+    end_dt   = _today() - timedelta(days=1)
     start_dt = end_dt - timedelta(days=days - 1)
     end_str, start_str = end_dt.isoformat(), start_dt.isoformat()
 
@@ -877,13 +895,15 @@ def _scale_daily(series: list[dict], monthly_vol: int) -> list[dict]:
     return [{"date": p["period"], "vol": round(p["ratio"] * s)} for p in series]
 
 
-def _scale_monthly(series: list[dict], monthly_vol: int) -> list[dict]:
-    """월별 ratio → 검색량 (최근 달 실제 검색량 기준 스케일)"""
+def _scale_monthly(series: list[dict], monthly_vol: int, anchor: int = -1) -> list[dict]:
+    """월별 ratio → 검색량 (anchor 달 = 실제 월 검색량 기준 스케일, 기본은 마지막 달)"""
     if not series:
         return []
     if monthly_vol <= 0:
         return [{"date": p["period"][:7], "vol": round(p["ratio"])} for p in series]
-    last_ratio = series[-1]["ratio"]
+    if len(series) < -anchor:
+        anchor = -1
+    last_ratio = series[anchor]["ratio"]
     if last_ratio <= 0:
         return [{"date": p["period"][:7], "vol": 0} for p in series]
     s = monthly_vol / last_ratio
@@ -897,7 +917,7 @@ def detail():
     if not keyword:
         return jsonify({"error": "keyword 필요"}), 400
 
-    end_dt = date.today() - timedelta(days=1)
+    end_dt = _today() - timedelta(days=1)
     # 당월은 진행 중이라 ratio가 절반 수준 → 배율 왜곡 방지를 위해 전월 말일 기준
     prev_month_end = end_dt.replace(day=1) - timedelta(days=1)
 
