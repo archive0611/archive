@@ -892,7 +892,7 @@ def _scale_daily(series: list[dict], monthly_vol: int) -> list[dict]:
     if total <= 0:
         return [{"date": p["period"], "vol": 0} for p in series]
     s = monthly_vol / total
-    return [{"date": p["period"], "vol": round(p["ratio"] * s)} for p in series]
+    return [{"date": p["period"], "vol": round(p["ratio"] * s), "ratio": p["ratio"]} for p in series]
 
 
 def _scale_monthly(series: list[dict], monthly_vol: int, anchor: int = -1) -> list[dict]:

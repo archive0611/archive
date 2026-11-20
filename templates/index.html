@@ -420,7 +420,18 @@ function drawQuickChart(series) {
   if (!series.length) { wrap.style.display = 'none'; return; }
   wrap.style.display = 'block';
   const labels = series.map(p => quickPartial && p.date === quickPartial.month ? p.date + '*' : p.date);
-  const values = series.map(p => p.vol);
+  // 급증일(평소의 10배 이상 튄 날)은 검색 횟수로 바꾸지 않음 → 그 달 값에서 급증일 몫을 뺌
+  const spikes = findSpikes(quickDailyRatio);
+  const mSum = {}, mSpk = {}, mCnt = {};
+  quickDailyRatio.forEach(([d, r]) => {
+    const m = d.slice(0, 7);
+    mSum[m] = (mSum[m] || 0) + r;
+    if (spikes.has(d)) { mSpk[m] = (mSpk[m] || 0) + r; mCnt[m] = (mCnt[m] || 0) + 1; }
+  });
+  const values = series.map(p => mSpk[p.date] && mSum[p.date] > 0
+    ? Math.round(p.vol * (1 - mSpk[p.date] / mSum[p.date])) : p.vol);
+  quickSpikeMonths = {};
+  series.forEach((p, i) => { if (mCnt[p.date]) quickSpikeMonths[p.date] = { days: mCnt[p.date], vol: values[i] }; });
   if (quickChart) quickChart.destroy();
   quickChart = new Chart(document.getElementById('quickChart'), {
     type: 'line',
@@ -432,7 +443,8 @@ function drawQuickChart(series) {
         borderColor: '#03c75a',
         backgroundColor: 'rgba(3,199,90,0.1)',
         borderWidth: 2,
-        pointRadius: 3,
+        pointRadius: series.map(p => mCnt[p.date] ? 5 : 3),
+        pointBackgroundColor: series.map(p => mCnt[p.date] ? '#f59e0b' : '#03c75a'),
         tension: 0.3,
         fill: true,
       }]
@@ -451,7 +463,11 @@ function drawQuickChart(series) {
           label: ctx => (quickPartial && series[ctx.dataIndex].date === quickPartial.month)
             ? `${partialLabel()} 검색량: ${ctx.parsed.y.toLocaleString()}회 (진행 중)`
             : `월 검색량: ${ctx.parsed.y.toLocaleString()}회`,
-          footer: () => '클릭 → 일별 보기',
+          footer: items => {
+            const sp = mCnt[series[items[0].dataIndex].date];
+            return (sp ? `⚠ 급증일 ${sp}일 제외한 값 (급증일은 확인 필요)
+` : '') + '클릭 → 일별 보기';
+          },
         } }
       },
       scales: {
@@ -468,6 +484,7 @@ function partialLabel() {
   const [, m, d] = quickPartial.until.split('-');
   return `${Number(m)}/${Number(d)}까지`;
 }
+let quickSpikeMonths = {};  // {YYYY-MM: {days, vol}} 급증일 있는 달(값은 급증일 제외)
 let quickDailyRatio = [];   // [[YYYY-MM-DD, ratio], ...] 조회 시 미리 받아둔 일별 비율
 let quickDailyChart = null;
 let quickDailySeq = 0;
@@ -486,9 +503,11 @@ async function loadQuickDaily(month, monthVol) {
   const [y, m] = month.split('-');
   wrap.style.display = 'block';
   const isPartial = quickPartial && quickPartial.month === month;
-  title.textContent = isPartial
-    ? `(${y}년 ${Number(m)}월 · ${partialLabel()} ${monthVol.toLocaleString()}회)`
-    : `(${y}년 ${Number(m)}월 · 월 ${monthVol.toLocaleString()}회)`;
+  const sm = quickSpikeMonths[month];
+  const shown = sm ? sm.vol : monthVol;
+  title.textContent = (isPartial
+    ? `(${y}년 ${Number(m)}월 · ${partialLabel()} ${shown.toLocaleString()}회`
+    : `(${y}년 ${Number(m)}월 · 월 ${shown.toLocaleString()}회`) + (sm ? ` · 급증일 ${sm.days}일 제외)` : ')');
   sum.textContent = '불러오는 중…';
   if (quickDailyChart) { quickDailyChart.destroy(); quickDailyChart = null; }
   try {
@@ -506,7 +525,7 @@ async function loadQuickDaily(month, monthVol) {
       const d = await r.json();
       if (seq !== quickDailySeq) return;
       if (!r.ok) { sum.innerHTML = `<span class="text-red-600">${d.error || '오류'}</span>`; return; }
-      daily = d.daily || [];
+      daily = scaleRatios((d.daily || []).map(p => [p.date, p.ratio ?? p.vol]), monthVol);
     }
     if (!daily.length) { sum.textContent = '일별 데이터가 없습니다.'; return; }
     quickDailyChart = drawDailyBars(document.getElementById('quickDailyChart'), daily, sum);
@@ -516,22 +535,47 @@ async function loadQuickDaily(month, monthVol) {
   }
 }
 
-// 일별 막대그래프 공용: daily=[{date, vol}], sumEl 에 평균/최고 요약
+// 급증일 찾기: 앞뒤 14일(자기 제외) 중앙값의 10배 이상인 날 → Map(date → 평소 대비 배수)
+const SPIKE_X = 10, SPIKE_WIN = 14;
+function findSpikes(ratios) {
+  const out = new Map();
+  for (let i = 0; i < ratios.length; i++) {
+    const r = ratios[i][1];
+    if (!(r > 0)) continue;
+    const near = [];
+    for (let j = Math.max(0, i - SPIKE_WIN); j <= Math.min(ratios.length - 1, i + SPIKE_WIN); j++)
+      if (j !== i && ratios[j][1] > 0) near.push(ratios[j][1]);
+    if (near.length < 7) continue;
+    near.sort((a, b) => a - b);
+    const med = near[Math.floor(near.length / 2)];
+    if (med > 0 && r >= SPIKE_X * med) out.set(ratios[i][0], r / med);
+  }
+  return out;
+}
+
+// 일별 막대그래프 공용: daily=[{date, vol, spike?}], sumEl 에 평균/최고 요약
+// 급증일(spike=평소 대비 배수)은 검색 횟수를 추정하지 않음 — 막대는 주황색으로 '높음'만 표시
 function drawDailyBars(canvas, daily, sumEl) {
-  const peak = daily.reduce((a, b) => (b.vol > a.vol ? b : a));
-  const avg  = Math.round(daily.reduce((a, b) => a + b.vol, 0) / daily.length);
+  const normal = daily.filter(p => !p.spike);
+  const spk    = daily.filter(p => p.spike);
+  const base   = normal.length ? normal : daily;
+  const peak = base.reduce((a, b) => ((b.vol || 0) > (a.vol || 0) ? b : a));
+  const avg  = Math.round(base.reduce((a, b) => a + (b.vol || 0), 0) / base.length);
+  const md = d => d.slice(5).replace('-', '/');
   sumEl.innerHTML = `하루 평균 <strong>${avg.toLocaleString()}</strong>회 · 최고 ` +
-    `<strong style="color:#03c75a">${peak.date.slice(5).replace('-', '/')} ${peak.vol.toLocaleString()}회</strong>`;
+    `<strong style="color:#03c75a">${md(peak.date)} ${(peak.vol || 0).toLocaleString()}회</strong>` +
+    (spk.length ? ` <span style="color:#d97706">· ⚠ 급증 ${spk.map(p => `${md(p.date)}(평소의 약 ${Math.round(p.spike)}배)`).join(', ')} — 확인 필요, 평균·최고에서 제외</span>` : '');
+  const cap = Math.max(1, ...normal.map(p => p.vol || 0)) * 1.25;  // 급증 막대 높이(숫자 대신 '높음' 표시용)
   const wk = ['일','월','화','수','목','금','토'];
   const multiMonth = daily[0].date.slice(0, 7) !== daily[daily.length - 1].date.slice(0, 7);
   return new Chart(canvas, {
     type: 'bar',
     data: {
-      labels: daily.map(p => multiMonth ? p.date.slice(5).replace('-', '/') : Number(p.date.slice(8)) + '일'),
+      labels: daily.map(p => multiMonth ? md(p.date) : Number(p.date.slice(8)) + '일'),
       datasets: [{
         label: '일 검색량',
-        data: daily.map(p => p.vol),
-        backgroundColor: daily.map(p => p.date === peak.date ? '#03c75a' : 'rgba(3,199,90,0.35)'),
+        data: daily.map(p => p.spike ? cap : p.vol),
+        backgroundColor: daily.map(p => p.spike ? '#f59e0b' : p.date === peak.date ? '#03c75a' : 'rgba(3,199,90,0.35)'),
         borderRadius: 3,
       }]
     },
@@ -543,7 +587,10 @@ function drawDailyBars(canvas, daily, sumEl) {
         tooltip: { callbacks: {
           title: items => { const p = daily[items[0].dataIndex];
             return `${p.date} (${wk[new Date(p.date + 'T00:00:00').getDay()]})`; },
-          label: ctx => `일 검색량: ${ctx.parsed.y.toLocaleString()}회`,
+          label: ctx => { const p = daily[ctx.dataIndex];
+            return p.spike
+              ? [`⚠ 급증: 평소의 약 ${Math.round(p.spike)}배`, '검색 횟수는 추정하지 않음 (확인 필요)']
+              : `일 검색량: ${ctx.parsed.y.toLocaleString()}회`; },
         } }
       },
       scales: {
@@ -554,9 +601,14 @@ function drawDailyBars(canvas, daily, sumEl) {
   });
 }
 
+// 비율 → 일 검색량. 배율은 기존과 같이 전체 비율 기준(평소 날 숫자는 그대로),
+// 급증일만 숫자를 비우고 spike(배수)를 붙임
 function scaleRatios(ratios, vol) {
   const tot = ratios.reduce((a, p) => a + p[1], 0);
-  return ratios.map(p => ({ date: p[0], vol: tot > 0 ? Math.round(p[1] * vol / tot) : 0 }));
+  const spikes = findSpikes(ratios);
+  return ratios.map(p => spikes.has(p[0])
+    ? { date: p[0], vol: null, spike: spikes.get(p[0]) }
+    : { date: p[0], vol: tot > 0 ? Math.round(p[1] * vol / tot) : 0 });
 }
 
 let quickRelated = [];
